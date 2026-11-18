@@ -109,6 +109,8 @@ The reference archive contains twelve explicit 3:2 quarter-note tuplets in Go
 Tell Her Now and 29 explicit 3:2 eighth-note tuplets in You're Gonna Break My
 Heart Tonight. Those two common values are supported by the new spelling path;
 this count alone does not verify that their detection succeeds from audio.
+The measure 28 regression also includes its simultaneous octave bass and
+upper-staff triads, checking that both hands retain the triplet durations.
 
 ## DuET score experiment
 

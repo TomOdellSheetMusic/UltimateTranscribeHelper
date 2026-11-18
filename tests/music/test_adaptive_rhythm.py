@@ -126,6 +126,31 @@ class AdaptiveRhythmTests(unittest.TestCase):
             self.assertTrue(all(n.findtext('type') == 'quarter' and n.findtext('duration') == '8' for n in notes))
             self.assertEqual([x.get('type') for x in xml.findall('.//tuplet')], ['start', 'stop'])
 
+    def test_reference_style_triplets_on_both_piano_staves(self):
+        # The same reference passage has octave bass and triad chords together.
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            midi = mido.MidiFile(ticks_per_beat=480)
+            track = mido.MidiTrack()
+            pitches = (37, 49, 56, 61, 64)
+            for _ in range(3):
+                for pitch in pitches:
+                    track.append(mido.Message('note_on', note=pitch, velocity=80))
+                for index, pitch in enumerate(pitches):
+                    track.append(mido.Message('note_off', note=pitch, time=320 if index == 0 else 0))
+            midi.tracks.append(track)
+            source, score = root / 'both-hands.mid', root / 'score.musicxml'
+            midi.save(source)
+            export_score(source, score, tempo=120, score_key='C')
+            xml = ET.parse(score).getroot()
+            notes = [n for n in xml.findall('.//note') if n.find('pitch') is not None]
+            self.assertEqual(len(notes), 15)
+            self.assertEqual(sum(n.findtext('staff') == '1' for n in notes), 9)
+            self.assertEqual(sum(n.findtext('staff') == '2' for n in notes), 6)
+            self.assertTrue(all(n.findtext('duration') == '8' for n in notes))
+            self.assertEqual(len(xml.findall('.//tuplet[@type="start"]')), 2)
+            self.assertEqual(len(xml.findall('.//tuplet[@type="stop"]')), 2)
+
     def test_triplets_preserve_manual_downbeat_and_partial_opening_bar(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
