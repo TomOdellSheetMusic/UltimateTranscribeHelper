@@ -147,6 +147,18 @@ def folder_settings_path():
     return model_settings_path().with_name("folders.json")
 
 
+def preferences_path():
+    return model_settings_path().with_name("preferences.json")
+
+
+def read_preferences():
+    try:
+        data = json.loads(preferences_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def read_folders():
     try:
         data = json.loads(folder_settings_path().read_text(encoding="utf-8"))
@@ -260,7 +272,7 @@ class Application(ttk.Frame):
         self.master = master
         self.pack(fill="both", expand=True)
         self.mode = tk.StringVar(value=next(iter(MODES)))
-        self.music_model = tk.StringVar(value="Piano")
+        self.music_model = tk.StringVar(value="Transkun V2 Aug")
         self.custom_model_path = read_imported_model()
         self.custom_models = {imported_model_label(path): path for path in read_imported_models()}
         self.remove_vocals = tk.BooleanVar(value=False)
@@ -313,6 +325,47 @@ class Application(ttk.Frame):
         self.description = tk.StringVar()
         self.defaults_description = tk.StringVar()
         self.thresholds = {key: tk.StringVar() for key in ("onset", "duration", "instrument")}
+        preferences = read_preferences()
+        preference_variables = {
+            "mode": self.mode, "music_model": self.music_model,
+            "remove_vocals": self.remove_vocals, "piano_only": self.piano_only,
+            "input_is_piano": self.input_is_piano, "save_separated_stem": self.save_separated_stem,
+            "include_vocals": self.include_vocals, "separator_model": self.separator_model,
+            "stem_model": self.stem_model, "stem_choice": self.stem_choice,
+            "use_gpu": self.use_gpu, "gpu_index": self.gpu_index,
+            "compare_enabled": self.compare_enabled, "compare_path": self.compare_path,
+            "score_tempo": self.score_tempo, "score_key": self.score_key, "align_bars": self.align_bars,
+            "score_downbeat": self.score_downbeat, "score_meter": self.score_meter,
+            "simplify_score": self.simplify_score, "neural_staff": self.neural_staff,
+            "split_hands": self.split_hands, "musescore_export": self.musescore_export,
+            "pdf_export": self.pdf_export, "lint_notes": self.lint_notes,
+            "smooth_notes": self.smooth_notes, "smooth_gap": self.smooth_gap,
+            "remove_short_notes": self.remove_short_notes, "minimum_short_note": self.minimum_short_note,
+            "keep_accompaniment": self.keep_accompaniment,
+        }
+        valid_preferences = {
+            "mode": set(MODES),
+            "music_model": {"Piano", "PianoV2", "Pop", "Stream", "Basic Pitch", "Transkun (piano)",
+                            "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor", *self.custom_models,
+                            CUSTOM_MODEL},
+        }
+        for name, variable in preference_variables.items():
+            if name in preferences:
+                try:
+                    saved = preferences[name]
+                    if name in valid_preferences and saved not in valid_preferences[name]:
+                        continue
+                    if isinstance(variable, tk.BooleanVar):
+                        if isinstance(saved, bool):
+                            variable.set(saved)
+                    elif isinstance(saved, (str, int, float)):
+                        variable.set(str(saved))
+                except (tk.TclError, TypeError):
+                    pass
+        for key, variable in self.thresholds.items():
+            if isinstance(preferences.get("thresholds"), dict) and key in preferences["thresholds"]:
+                variable.set(str(preferences["thresholds"][key]))
+        self._preference_variables = preference_variables
         self.current_model = None
         self.model_thresholds = {}
         self.messages = queue.Queue()
@@ -649,8 +702,28 @@ class Application(ttk.Frame):
         self.log.configure(yscrollcommand=log_scroll.set)
         self.log_frame.grid_remove()
         self.mode_changed()
+        for variable in self._preference_variables.values():
+            variable.trace_add("write", self.save_preferences)
+        for variable in self.thresholds.values():
+            variable.trace_add("write", self.save_preferences)
         self.after(100, self.poll)
         master.protocol("WM_DELETE_WINDOW", self.close)
+
+    def save_preferences(self, *_args):
+        """Persist user-selected interface settings between launches."""
+        data = {name: variable.get() for name, variable in self._preference_variables.items()}
+        data["thresholds"] = {key: variable.get() for key, variable in self.thresholds.items()}
+        settings = preferences_path()
+        temporary = settings.with_suffix(".tmp")
+        try:
+            settings.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(json.dumps(data), encoding="utf-8")
+            temporary.replace(settings)
+        except OSError:
+            pass
+        finally:
+            if temporary.exists():
+                temporary.unlink()
 
     @staticmethod
     def _configure_style(master):
