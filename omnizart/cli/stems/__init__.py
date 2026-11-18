@@ -10,7 +10,7 @@ def stems():
 @stems.command()
 @click.argument("input_audio", type=click.Path(exists=True, dir_okay=False))
 @click.option("--output", required=True, type=click.Path(), help="Output basename, without extension.")
-@click.option("--device", type=click.Choice(["cpu", "directml"]), default="cpu")
+@click.option("--device", type=click.Choice(["cpu", "directml", "cuda"]), default="cpu")
 @click.option("--gpu-index", type=click.IntRange(0, 99), default=0)
 @click.option("--stem", multiple=True, help="Save selected stems; repeat for more than one. Default: all.")
 @click.option("--custom-model", type=click.Path(exists=True, dir_okay=False), default=None, help="User-supplied ONNX model compatible with the six-stem interface.")
@@ -21,11 +21,16 @@ def transcribe(input_audio, output, device, gpu_index, stem, custom_model, backe
     """Create drums, bass, other, vocals, guitar, and piano WAV files."""
     try:
         if backend == 'pymss':
-            if device != 'cpu' or custom_model:
-                raise ValueError('pymss uses its own CPU runtime and model registry.')
+            if device == 'directml' or custom_model:
+                raise ValueError('pymss supports CPU or NVIDIA CUDA and uses its own model registry.')
             from omnizart.desktop.pymss_backend import separate
-            separate(input_audio, output, pymss_model, selected_stems=stem or None, source_name=pymss_source)
+            options = dict(selected_stems=stem or None, source_name=pymss_source)
+            if device == 'cuda':
+                options.update(device=device, gpu_index=gpu_index)
+            separate(input_audio, output, pymss_model, **options)
         else:
+            if device == 'cuda':
+                raise ValueError('The six-stem backend supports CPU or DirectML, not CUDA.')
             from omnizart.desktop.six_stems import separate
             options = dict(device=device, gpu_index=gpu_index)
             if stem:

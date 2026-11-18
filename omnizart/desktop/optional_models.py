@@ -12,11 +12,12 @@ PACKAGES = {
     "YourMT3": "mt3-infer[torch] @ https://github.com/openmirlab/mt3-infer/archive/refs/heads/master.zip",
     "MuScriptor": "muscriptor @ https://github.com/muscriptor/muscriptor/archive/refs/heads/main.zip",
     "pymss": "pymss==2.4.0",
+    "pymss CUDA": "pymss==2.4.0",
 }
 
 # Revision 2 repairs YourMT3's Transformers constraint and gives the score
 # backends their own CPU PyTorch, including in nested Python environments.
-READY_REVISIONS = {"YourMT3": "2", "MuScriptor": "ready", "Piano SVSep": "2", "Beat This": "2", "pymss": "1"}
+READY_REVISIONS = {"YourMT3": "2", "MuScriptor": "ready", "Piano SVSep": "2", "Beat This": "2", "pymss": "1", "pymss CUDA": "1"}
 SVSEP_COMMIT = "1462e7c28d7adaae033150883a7cb00238ee364a"
 SVSEP_SHA256 = "1f71ab8b6c7cd271e18adfba5ccbcd634a8530a44e46aabede27e15ce84dbe32"
 SVSEP_URL = f"https://raw.githubusercontent.com/CPJKU/piano_svsep/{SVSEP_COMMIT}/pretrained_models/model.ckpt"
@@ -78,7 +79,7 @@ def _verify_svsep(python, checkpoint, flags):
 def ready(model):
     try:
         return (python_path(model).is_file() and
-                (model != "pymss" or (environment(model) / ".runtime-source").read_text(encoding="utf-8") == _runtime_identity()) and
+                (model not in ("pymss", "pymss CUDA") or (environment(model) / ".runtime-source").read_text(encoding="utf-8") == _runtime_identity()) and
                 (model not in ("Piano SVSep", "Beat This") or
                  (_verified_model(environment(model) / "model.ckpt", SVSEP_SHA256 if model == "Piano SVSep" else BEAT_SHA256) and
                   (environment(model) / ".runtime-source").read_text(encoding="utf-8") == _runtime_identity())) and
@@ -95,16 +96,16 @@ def install(model):
     base_python = Path(sys.executable)
     if base_python.name.lower() == "pythonw.exe":
         base_python = base_python.with_name("python.exe")
-    if model in ("Piano SVSep", "Beat This", "pymss"):
+    if model in ("Piano SVSep", "Beat This", "pymss", "pymss CUDA"):
         # A venv created inside another venv does not inherit the parent venv's
         # site-packages. Install CPU PyTorch locally instead of assuming the
         # packaged runtime's copy is visible or modifying that runtime.
         venv = [str(base_python), "-m", "venv", str(folder)]
-        torch_packages = ["torch==2.5.1+cpu"]
+        torch_packages = ["torch==2.5.1+cu121" if model == "pymss CUDA" else "torch==2.5.1+cpu"]
         if model == "Beat This":
             torch_packages.append("torchaudio==2.5.1+cpu")
         install_torch = [str(python_path(model)), "-m", "pip", "install", *torch_packages,
-                         "--index-url", "https://download.pytorch.org/whl/cpu"]
+                         "--index-url", "https://download.pytorch.org/whl/cu121" if model == "pymss CUDA" else "https://download.pytorch.org/whl/cpu"]
         if model == "Piano SVSep":
             dependencies = ["torch-geometric==2.8.1", "torch-scatter==2.1.2+pt25cpu", "partitura==1.8.0",
                             "pytorch-lightning==2.6.6", "verovio==4.2.1", "torchmetrics==1.9.0",
@@ -123,12 +124,14 @@ def install(model):
             dependencies.append("transformers==4.43.4")
         pip = [str(python_path(model)), "-m", "pip", "install", *dependencies]
     commands = [venv]
-    if model in ("Piano SVSep", "Beat This", "pymss"):
+    if model in ("Piano SVSep", "Beat This", "pymss", "pymss CUDA"):
         commands.append(install_torch)
     commands.append(pip)
     if model in ("Piano SVSep", "Beat This", "pymss"):
         commands.append([str(python_path(model)), "-c", "import torch; assert torch.__version__.split('+')[0] == '2.5.1' and torch.version.cuda is None, 'This model requires CPU PyTorch 2.5.1.'"])
-    if model == "pymss":
+    if model == "pymss CUDA":
+        commands.append([str(python_path(model)), "-c", "import torch; assert torch.__version__.split('+')[0] == '2.5.1' and torch.version.cuda is not None, 'CUDA PyTorch is required.'"])
+    if model in ("pymss", "pymss CUDA"):
         commands.append([str(python_path(model)), "-c", "import pymss, pymss_core, av; print('pymss ready')"])
     for command in commands:
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -156,6 +159,6 @@ def install(model):
         if model == "Piano SVSep":
             _verify_svsep(python_path(model), target, flags)
         (folder / ".runtime-source").write_text(_runtime_identity(), encoding="utf-8")
-    if model == "pymss":
+    if model in ("pymss", "pymss CUDA"):
         (folder / ".runtime-source").write_text(_runtime_identity(), encoding="utf-8")
     marker.write_text(READY_REVISIONS[model], encoding="utf-8")

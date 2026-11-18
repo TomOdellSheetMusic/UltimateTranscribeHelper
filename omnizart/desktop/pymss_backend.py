@@ -22,10 +22,10 @@ def _environment():
     return env
 
 
-def _command(*arguments):
-    if not ready('pymss'):
-        raise RuntimeError('pymss is not installed. Use Browse pymss models to install it.')
-    return [str(python_path('pymss')), '-m', 'pymss.cli', *map(str, arguments)]
+def _command(*arguments, runtime='pymss'):
+    if not ready(runtime):
+        raise RuntimeError(f'{runtime} runtime is not installed. Install it in the desktop app.')
+    return [str(python_path(runtime)), '-m', 'pymss.cli', *map(str, arguments)]
 
 
 def _capture(*arguments):
@@ -60,15 +60,27 @@ def register(name, architecture, weights, config=None):
     return _capture(*args)
 
 
-def separate(source, output_base, model, selected_stems=None, source_name='huggingface'):
-    """Run pymss on CPU, then publish selected WAVs without overwriting files."""
+def separate(source, output_base, model, selected_stems=None, source_name='huggingface', device='cpu', gpu_index=0):
+    """Run pymss and publish selected WAVs without overwriting files."""
     if not model:
         raise ValueError('Choose a pymss model.')
+    if device not in ('cpu', 'cuda') or not isinstance(gpu_index, int) or not 0 <= gpu_index <= 99:
+        raise ValueError('Choose CPU or CUDA and a GPU index between 0 and 99.')
+    runtime = 'pymss CUDA' if device == 'cuda' else 'pymss'
+    if device == 'cuda':
+        _command(runtime=runtime)  # Check installation before probing.
+        probe = subprocess.run([str(python_path(runtime)), '-c',
+            "import sys, torch; i=int(sys.argv[1]); assert torch.cuda.is_available(), 'CUDA is unavailable; check the NVIDIA driver'; assert i < torch.cuda.device_count(), 'GPU index is unavailable'; torch.cuda.init(); print(torch.cuda.get_device_name(i))", str(gpu_index)],
+            env=_environment(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            encoding='utf-8', errors='replace', timeout=60, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if probe.returncode:
+            raise RuntimeError('NVIDIA CUDA could not start: ' + probe.stdout[-2000:])
     source, output_base = Path(source), Path(output_base)
     model_root().mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix='omnizart-pymss-', dir=str(output_base.parent)) as temp:
         command = _command('infer', model, '--model-dir', model_root(), '--source', source_name,
-                           '-i', source, '-o', temp, '--device', 'cpu', '--format', 'wav')
+                           '-i', source, '-o', temp, '--device', device, '--format', 'wav',
+                           *(['--device-id', gpu_index] if device == 'cuda' else []), runtime=runtime)
         try:
             result = subprocess.run(command, env=_environment(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=7200)
         except subprocess.TimeoutExpired as exc:

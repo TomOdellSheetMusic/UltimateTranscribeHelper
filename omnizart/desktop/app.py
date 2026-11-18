@@ -368,8 +368,18 @@ class Application(ttk.Frame):
             row=3, column=0, sticky="w", pady=(8, 0))
         self.models_button = ttk.Button(card, text="Models & import...", style="Link.TButton", command=self.show_models)
         self.models_button.grid(row=3, column=1, sticky="e", pady=(8, 0))
-        self._path_row(card, 4, "Input file", self.source, self.browse_input)
-        self._path_row(card, 6, "Save results to", self.destination, self.browse_output)
+        input_entry = self._path_row(card, 4, "Input file (or drop a file)", self.source, self.browse_input)
+        output_entry = self._path_row(card, 6, "Save results to", self.destination, self.browse_output)
+        try:
+            from tkinterdnd2 import DND_FILES, TkinterDnD
+            TkinterDnD._require(master)
+            for widget in (canvas, body, card, input_entry):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind('<<Drop>>', self.drop_input)
+            output_entry.drop_target_register(DND_FILES)
+            output_entry.dnd_bind('<<Drop>>', self.drop_output)
+        except (ImportError, RuntimeError, tk.TclError):
+            pass  # Browse remains available when running without the optional extension.
         self.separation_option = ttk.Checkbutton(card, text="Reduce vocals before transcribing instruments",
                                                 variable=self.remove_vocals, style="App.TCheckbutton",
                                                 command=self.update_separation_controls)
@@ -623,8 +633,37 @@ class Application(ttk.Frame):
         frame = ttk.Frame(parent, style="Card.TFrame")
         frame.grid(row=row + 1, column=0, columnspan=2, sticky="ew")
         frame.columnconfigure(0, weight=1)
-        ttk.Entry(frame, textvariable=variable, style="App.TEntry").grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        entry = ttk.Entry(frame, textvariable=variable, style="App.TEntry")
+        entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(frame, text="Browse...", style="Secondary.TButton", command=callback).grid(row=0, column=1)
+        return entry
+
+    def _drop_path(self, event, directory=False):
+        try:
+            paths = self.master.tk.splitlist(event.data)
+            if len(paths) != 1:
+                raise ValueError('Drop one path at a time.')
+            path = Path(paths[0])
+            if not (path.is_dir() if directory else path.is_file()):
+                raise ValueError('Drop an existing ' + ('folder.' if directory else 'file.'))
+            if directory:
+                self.destination.set(str(path))
+                self.save_folders(output_folder=str(path))
+            else:
+                self.source.set(str(path))
+                self.input_folder = str(path.parent)
+                self.save_folders(input_folder=self.input_folder)
+            self.status.set('Selected: ' + str(path))
+            return 'copy'
+        except (ValueError, tk.TclError) as exc:
+            self.status.set(str(exc))
+            return 'refuse_drop'
+
+    def drop_input(self, event):
+        return self._drop_path(event)
+
+    def drop_output(self, event):
+        return self._drop_path(event, directory=True)
 
     def mode_changed(self, event=None):
         mode, input_kind, output_kind = MODES[self.mode.get()]
@@ -769,7 +808,7 @@ class Application(ttk.Frame):
         uvr = (self.mode.get() == "Piano and instruments" and
                (self.remove_vocals.get() or self.include_vocals.get()) and
                self.separator_model.get() == "UVR MDX (recommended)")
-        stems = self.mode.get() == "Separate stems (audio)" and self.stem_model.get() != 'pymss model'
+        stems = self.mode.get() == "Separate stems (audio)"
         music_piano = self.mode.get() == 'Piano and instruments' and self.piano_only.get()
         if music_piano:
             self.stem_settings.grid()
@@ -790,9 +829,10 @@ class Application(ttk.Frame):
         elif self.stem_choice.get() not in choices:
             self.stem_choice.set('All')
         self.stem_choice_picker.configure(values=choices)
-        piano = self.mode.get() == "Piano and instruments" and self.piano_only.get() and self.stem_model.get() != 'pymss model'
+        piano = self.mode.get() == "Piano and instruments" and self.piano_only.get()
+        pymss_gpu = (stems or piano) and self.stem_model.get() == 'pymss model'
         self.gpu_option.configure(state="normal" if uvr or stems or piano else "disabled",
-                                  text="Use GPU for separation (DirectML)" if stems else
+                                  text="Use NVIDIA GPU for separation (CUDA)" if pymss_gpu else "Use GPU for separation (DirectML)" if stems or piano else
                                        "Use GPU for UVR separation (DirectML)")
         self.gpu_entry.configure(state="normal" if (uvr or stems or piano) and self.use_gpu.get() else "disabled")
 
@@ -1399,6 +1439,21 @@ class Application(ttk.Frame):
             if not ready('pymss') or not self.pymss_model.get().strip():
                 messagebox.showerror('pymss model', 'Use Browse pymss models to install pymss and choose a model.')
                 return
+            if self.use_gpu.get() and not ready('pymss CUDA'):
+                if self.optional_installing:
+                    return
+                from omnizart.desktop.optional_models import install
+                self.optional_installing = True
+                self.start_button.configure(state='disabled')
+                self.status.set('Installing NVIDIA CUDA runtime for pymss; this may take several minutes...')
+                def install_cuda():
+                    try:
+                        install('pymss CUDA')
+                        self.messages.put(('optional_install_done', ('pymss CUDA', 0, '')))
+                    except Exception as exc:
+                        self.messages.put(('optional_install_done', ('pymss CUDA', 1, str(exc))))
+                threading.Thread(target=install_cuda, daemon=True).start()
+                return
         elif uses_stem_model and self.stem_model.get() == "Custom six-stem ONNX":
             custom = Path(self.custom_stem_model.get().strip())
             if not custom.is_file() or custom.suffix.lower() != '.onnx':
@@ -1426,7 +1481,7 @@ class Application(ttk.Frame):
             if self.music_model.get() not in ("Pop", "Stream", "Basic Pitch", CUSTOM_MODEL) and self.music_model.get() not in self.custom_models:
                 values["instrument"] = ""
             options = music_options(values, self.music_model.get()) if mode == "music" else []
-            gpu_enabled = (self.use_gpu.get() and ((mode == "stems" and self.stem_model.get() != 'pymss model') or (mode == "music" and self.piano_only.get() and self.stem_model.get() != 'pymss model') or
+            gpu_enabled = (self.use_gpu.get() and ((mode == "stems") or (mode == "music" and self.piano_only.get()) or
                            (mode == "music" and (self.remove_vocals.get() or self.include_vocals.get()) and
                             self.separator_model.get() == "UVR MDX (recommended)")))
             gpu_index = self.gpu_index.get().strip()
@@ -1499,7 +1554,7 @@ class Application(ttk.Frame):
                 elif self.stem_model.get() == 'Custom six-stem ONNX':
                     cmd.extend(['--custom-stem-model', self.custom_stem_model.get().strip()])
                 if gpu_enabled:
-                    cmd.extend(["--uvr-device", "directml", "--gpu-index", gpu_index])
+                    cmd.extend(["--pymss-device", "cuda", "--gpu-index", gpu_index] if self.stem_model.get() == 'pymss model' else ["--uvr-device", "directml", "--gpu-index", gpu_index])
             if self.input_is_piano.get():
                 cmd.append("--input-is-piano")
             if self.compare_enabled.get():
@@ -1542,7 +1597,7 @@ class Application(ttk.Frame):
                     cmd.append("--save-accompaniment")
         elif mode == "stems":
             if gpu_enabled:
-                cmd.extend(["--device", "directml", "--gpu-index", gpu_index])
+                cmd.extend(["--device", "cuda" if self.stem_model.get() == 'pymss model' else "directml", "--gpu-index", gpu_index])
             if self.stem_model.get() == "Custom six-stem ONNX":
                 cmd.extend(["--custom-model", self.custom_stem_model.get().strip()])
             elif self.stem_model.get() == "pymss model":

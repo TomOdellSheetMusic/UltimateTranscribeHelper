@@ -103,6 +103,7 @@ threadpoolctl==3.8.0
 torch==2.5.1+cpu
 torch-optimizer==0.3.0
 torchlibrosa==0.1.0
+tkinterdnd2==0.4.3
 torchaudio==2.5.1+cpu
 tqdm==4.70.1
 transkun==2.0.1

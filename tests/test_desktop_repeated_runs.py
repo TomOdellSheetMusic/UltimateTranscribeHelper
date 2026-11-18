@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import tkinter as tk
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import mido
@@ -10,6 +11,43 @@ from omnizart.desktop.app import Application
 
 
 class RepeatedRunsTests(unittest.TestCase):
+    def test_drop_and_pymss_gpu_commands(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song with spaces ü.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    self.assertTrue(root.tk.call('package', 'provide', 'tkdnd'))
+                    self.assertEqual(app.drop_input(SimpleNamespace(data='{' + str(audio) + '}')), 'copy')
+                    self.assertEqual(app.source.get(), str(audio))
+                    self.assertEqual(app.drop_input(SimpleNamespace(data='{' + str(audio) + '} {' + str(audio) + '}')), 'refuse_drop')
+                    self.assertEqual(app.drop_output(SimpleNamespace(data='{' + str(folder) + '}')), 'copy')
+                    app.stem_model.set('pymss model')
+                    app.pymss_model.set('piano-model')
+                    app.piano_only.set(True)
+                    app.use_gpu.set(True)
+                    app.update_separation_controls()
+                    self.assertEqual(str(app.gpu_option['state']), 'normal')
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertEqual(command[command.index('--pymss-device') + 1], 'cuda')
+                    self.assertNotIn('--uvr-device', command)
+                    app.output_lock.unlink()
+                    app.mode.set('Separate stems (audio)')
+                    app.mode_changed()
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertEqual(command[command.index('--device') + 1], 'cuda')
+                    app.output_lock.unlink()
+                finally:
+                    root.destroy()
+
     def test_pymss_selected_for_piano_isolation_and_stem_output(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)

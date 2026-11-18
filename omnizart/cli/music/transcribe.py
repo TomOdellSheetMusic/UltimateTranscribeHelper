@@ -29,6 +29,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--piano-separator", type=click.Choice(['six-stem', 'pymss']), default='six-stem', help="Backend for stem separation.")
 @click.option("--pymss-model", default=None, help="pymss catalog or registered model for stem separation.")
 @click.option("--pymss-source", type=click.Choice(['huggingface', 'modelscope', 'hf-mirror']), default='huggingface')
+@click.option("--pymss-device", type=click.Choice(['cpu', 'cuda']), default='cpu')
 @click.option("--custom-stem-model", type=click.Path(exists=True, dir_okay=False), default=None, help="Compatible six-stem ONNX model.")
 @click.option("--save-accompaniment", is_flag=True, help="Keep the separated accompaniment WAV.")
 @click.option("--include-vocals", is_flag=True, help="Add a separate vocal melody track to the MIDI.")
@@ -51,7 +52,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--smooth-gap-ms", type=click.FloatRange(0, 200), default=30, help="Maximum gap to join, in milliseconds.")
 @click.option("--remove-short-ms", type=click.FloatRange(0, 200), default=0, help="Also remove notes shorter than this duration; 0 disables.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
-               remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, custom_stem_model,
+               remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
                save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
                compare_midi, score_grid, score, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms):
     """Transcribe a single audio and output as a MIDI file.
@@ -84,7 +85,9 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
     if input_is_piano and (selected_stem or remove_vocals or include_vocals):
         raise click.UsageError("--input-is-piano cannot be combined with audio separation or a vocal track.")
     if piano_separator == 'pymss' and selected_stem and (not pymss_model or custom_stem_model or uvr_device != 'cpu'):
-        raise click.UsageError('pymss separation requires a model and uses its own CPU runtime.')
+        raise click.UsageError('pymss separation requires a model and uses its own runtime.')
+    if pymss_device == 'cuda' and (piano_separator != 'pymss' or not selected_stem):
+        raise click.UsageError('CUDA requires pymss stem separation.')
     if selected_stem == 'piano' and model_path in ("Pop", "Stream"):
         click.echo("Piano-only mode works best with a piano model; Pop and Stream may still produce non-piano notes.", err=True)
     if uvr_device != "cpu" and not (selected_stem or (separator == "uvr" and (remove_vocals or include_vocals))):
@@ -109,7 +112,10 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             base = Path(temporary) / "separated"
             if piano_separator == 'pymss':
                 from omnizart.desktop.pymss_backend import separate as separate_pymss
-                separate_pymss(input_audio, base, pymss_model, selected_stems=[selected_stem], source_name=pymss_source)
+                options = dict(selected_stems=[selected_stem], source_name=pymss_source)
+                if pymss_device == 'cuda':
+                    options.update(device='cuda', gpu_index=gpu_index)
+                separate_pymss(input_audio, base, pymss_model, **options)
             else:
                 from omnizart.desktop.six_stems import separate as separate_stems
                 options = dict(device=uvr_device, gpu_index=gpu_index)

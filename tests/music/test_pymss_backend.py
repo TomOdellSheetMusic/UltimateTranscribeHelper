@@ -11,6 +11,34 @@ from omnizart.desktop import pymss_backend
 
 
 class PymssTests(unittest.TestCase):
+    def test_cuda_probe_and_device_are_forwarded(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'song.wav'
+            source.touch()
+            commands = []
+            def run(command, **kwargs):
+                commands.append(command)
+                if '-o' in command:
+                    (Path(command[command.index('-o') + 1]) / 'song_piano.wav').write_bytes(b'piano')
+                return SimpleNamespace(returncode=0, stdout='GPU')
+            with patch.object(pymss_backend, 'ready', return_value=True), \
+                 patch.object(pymss_backend, 'python_path', return_value=Path('python')), \
+                 patch.object(pymss_backend, 'model_root', return_value=root / 'models'), \
+                 patch.object(pymss_backend.subprocess, 'run', side_effect=run):
+                pymss_backend.separate(source, root / 'out', 'model', ['piano'], device='cuda', gpu_index=1)
+            self.assertEqual(commands[-1][commands[-1].index('--device') + 1], 'cuda')
+            self.assertEqual(commands[-1][commands[-1].index('--device-id') + 1], '1')
+            self.assertIn('torch.cuda.is_available()', commands[0][2])
+
+    def test_cuda_failure_is_not_silently_run_on_cpu(self):
+        with TemporaryDirectory() as directory, \
+             patch.object(pymss_backend, 'ready', return_value=True), \
+             patch.object(pymss_backend.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='no GPU')) as run:
+            with self.assertRaisesRegex(RuntimeError, 'no GPU'):
+                pymss_backend.separate(Path(directory) / 'song.wav', Path(directory) / 'out', 'model', device='cuda')
+            self.assertEqual(run.call_count, 1)
+
     def test_timeout_is_reported_as_separation_error(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

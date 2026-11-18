@@ -52,7 +52,7 @@ def main():
     for name in ("nnls-chroma-src", "vamp-plugin-sdk"):
         if not (source_root / name).is_dir():
             raise SystemExit(f"Missing plugin source tree: {source_root / name}")
-    subprocess.run([str(python), "-c", "import omnizart, tensorflow, librosa, madmom, vamp, sherpa_onnx, basic_pitch, resampy, onnxruntime; "
+    subprocess.run([str(python), "-c", "import omnizart, tensorflow, librosa, madmom, vamp, sherpa_onnx, basic_pitch, resampy, onnxruntime, tkinterdnd2; "
                     "assert basic_pitch.ICASSP_2022_MODEL_PATH.exists(); "
                     "assert 'DmlExecutionProvider' in onnxruntime.get_available_providers(); "
                     "assert 'nnls-chroma:nnls-chroma' in vamp.list_plugins()"],
