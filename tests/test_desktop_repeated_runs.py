@@ -26,7 +26,7 @@ class RepeatedRunsTests(unittest.TestCase):
                     self.assertTrue(root.tk.call('package', 'provide', 'tkdnd'))
                     self.assertEqual(app.drop_input(SimpleNamespace(data='{' + str(audio) + '}')), 'copy')
                     self.assertEqual(app.source.get(), str(audio))
-                    self.assertEqual(app.drop_input(SimpleNamespace(data='{' + str(audio) + '} {' + str(audio) + '}')), 'refuse_drop')
+                    self.assertEqual(app.drop_input(SimpleNamespace(data='{' + str(audio) + '} {' + str(folder / 'missing.wav') + '}')), 'refuse_drop')
                     self.assertEqual(app.drop_output(SimpleNamespace(data='{' + str(folder) + '}')), 'copy')
                     app.stem_model.set('pymss model')
                     app.pymss_model.set('piano-model')
@@ -44,6 +44,117 @@ class RepeatedRunsTests(unittest.TestCase):
                     app.start()
                     command = thread.call_args.kwargs['args'][0]
                     self.assertEqual(command[command.index('--device') + 1], 'cuda')
+                    app.output_lock.unlink()
+                finally:
+                    root.destroy()
+
+    def test_queue_runs_in_order_with_captured_settings_and_separate_details(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            first, second = folder / 'one.wav', folder / 'two.wav'
+            first.touch()
+            second.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread:
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.destination.set(str(folder))
+                    app.source.set(str(first))
+                    app.music_model.set('Piano')
+                    app.enqueue_current()
+                    first_command, first_folder = thread.call_args.kwargs['args']
+                    self.assertEqual(app.jobs[0]['state'], 'Running')
+                    self.assertEqual(str(app.start_button['state']), 'normal')
+                    app.source.set(str(second))
+                    app.music_model.set('PianoV2')
+                    app.enqueue_current()
+                    app.music_model.set('Pop')
+                    self.assertEqual(app.jobs[1]['state'], 'Waiting')
+                    self.assertEqual(thread.call_count, 1)
+                    first_base = Path(first_command[first_command.index('--output') + 1])
+                    midi = mido.MidiFile()
+                    midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80)]))
+                    midi.save(str(first_base) + '.mid')
+                    app.messages.put(('log', 'first job output\n'))
+                    app.messages.put(('done', (0, first_folder)))
+                    app.poll()
+                    root.update()
+                    self.assertEqual(app.jobs[0]['state'], 'Finished')
+                    second_command, second_folder = thread.call_args.kwargs['args']
+                    self.assertEqual(second_command[second_command.index('--model-path') + 1], 'PianoV2')
+                    self.assertEqual(app.music_model.get(), 'Pop')
+                    self.assertEqual(app.jobs[1]['state'], 'Running')
+                    app.messages.put(('log', 'second job output\n'))
+                    app.queue_view.selection_set(app.jobs[0]['id'])
+                    app._show_selected_job()
+                    app.poll()
+                    self.assertIn('first job output', app.log.get('1.0', 'end'))
+                    self.assertNotIn('second job output', app.log.get('1.0', 'end'))
+                    app.messages.put(('done', (1, second_folder)))
+                    app.poll()
+                    self.assertEqual(app.jobs[1]['state'], 'Needs attention')
+                    self.assertTrue(app.log_open)
+                    app.clear_finished_jobs()
+                    self.assertEqual(app.jobs, [])
+                finally:
+                    root.destroy()
+
+    def test_dropping_multiple_files_queues_them(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            first, second = folder / 'one.wav', folder / 'two.wav'
+            first.touch()
+            second.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread'):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.destination.set(str(folder))
+                    event = SimpleNamespace(data='{' + str(first) + '} {' + str(second) + '}')
+                    self.assertEqual(app.drop_input(event), 'copy')
+                    self.assertEqual([Path(job['source']).name for job in app.jobs], ['one.wav', 'two.wav'])
+                    self.assertEqual([job['state'] for job in app.jobs], ['Running', 'Waiting'])
+                    app.queue_view.selection_set(app.jobs[1]['id'])
+                    app.remove_queued_job()
+                    self.assertEqual(len(app.jobs), 1)
+                    app.output_lock.unlink()
+                finally:
+                    root.destroy()
+
+    def test_queue_preserves_settings_across_optional_install(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            first, second = folder / 'one.wav', folder / 'two.wav'
+            first.touch()
+            second.touch()
+            installed = set()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', side_effect=lambda model: model in installed):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.destination.set(str(folder))
+                    app.source.set(str(first))
+                    app.music_model.set('YourMT3')
+                    app.enqueue_current()
+                    self.assertEqual(app.jobs[0]['state'], 'Installing model')
+                    app.source.set(str(second))
+                    app.music_model.set('Piano')
+                    app.enqueue_current()
+                    installed.add('YourMT3')
+                    app.messages.put(('optional_install_done', ('YourMT3', 0, '')))
+                    app.poll()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertEqual(command[command.index('--model-path') + 1], 'YourMT3')
+                    self.assertEqual(Path(command[command.index('transcribe') + 1]), first)
+                    self.assertEqual(app.source.get(), str(second))
+                    self.assertEqual(app.jobs[1]['state'], 'Waiting')
                     app.output_lock.unlink()
                 finally:
                     root.destroy()

@@ -324,11 +324,22 @@ class Application(ttk.Frame):
         self.output_lock = None
         self.advanced_open = False
         self.log_open = False
+        self.jobs = []
+        self.active_job = None
+        self._job_sequence = 0
 
         master.title("Omnizart")
-        master.geometry("900x760")
+        master.geometry("1020x850")
         master.minsize(720, 650)
         master.configure(bg=BG)
+        toolbar = ttk.Frame(self, style='Root.TFrame', padding=(24, 10))
+        toolbar.pack(side='top', fill='x')
+        ttk.Label(toolbar, text='OMNIZART', style='Eyebrow.TLabel').pack(side='left', padx=(0, 24))
+        ttk.Button(toolbar, text='Input', style='RootLink.TButton', command=lambda: self._navigate('input')).pack(side='left', padx=(0, 16))
+        ttk.Button(toolbar, text='Queue', style='RootLink.TButton', command=lambda: self._navigate('queue')).pack(side='left', padx=(0, 16))
+        ttk.Button(toolbar, text='Details', style='RootLink.TButton', command=lambda: self._navigate('details')).pack(side='left')
+        self.quick_add_button = ttk.Button(toolbar, text='Add to queue  +', style='Primary.TButton', command=self.enqueue_current)
+        self.quick_add_button.pack(side='right')
         canvas = tk.Canvas(self, bg=BG, highlightthickness=0, borderwidth=0)
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview, style="App.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -339,13 +350,14 @@ class Application(ttk.Frame):
         canvas_window = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(canvas_window, width=event.width))
-        canvas.bind_all("<MouseWheel>", lambda event: canvas.yview_scroll(-int(event.delta / 120), "units"))
+        self.canvas = canvas
+        self.body = body
+        canvas.bind_all("<MouseWheel>", self._mousewheel)
 
         header = ttk.Frame(body, style="Root.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 20))
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="OMNIZART  /  TRANSCRIPTION", style="Eyebrow.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="Turn sound into music.", style="Title.TLabel").grid(row=1, column=0, sticky="w", pady=(5, 4))
+        ttk.Label(header, text="Turn sound into music.", style="Title.TLabel").grid(row=1, column=0, sticky="w", pady=(0, 4))
         ttk.Label(header, text="Choose a recording, pick a model, and create an editable MIDI.",
                   style="Subtitle.TLabel").grid(row=2, column=0, sticky="w")
 
@@ -380,6 +392,16 @@ class Application(ttk.Frame):
             output_entry.dnd_bind('<<Drop>>', self.drop_output)
         except (ImportError, RuntimeError, tk.TclError):
             pass  # Browse remains available when running without the optional extension.
+        self.sections = ttk.Notebook(body, style="App.TNotebook")
+        self.sections.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        separation_card = ttk.Frame(self.sections, style="Card.TFrame", padding=(20, 14))
+        cleanup_card = ttk.Frame(self.sections, style="Card.TFrame", padding=(20, 14))
+        score_card = ttk.Frame(self.sections, style="Card.TFrame", padding=(20, 14))
+        for panel, title in ((separation_card, 'Separation'), (score_card, 'Score'), (cleanup_card, 'MIDI cleanup')):
+            panel.columnconfigure(0, weight=1)
+            panel.columnconfigure(1, weight=1)
+            self.sections.add(panel, text=title)
+        card = separation_card
         self.separation_option = ttk.Checkbutton(card, text="Reduce vocals before transcribing instruments",
                                                 variable=self.remove_vocals, style="App.TCheckbutton",
                                                 command=self.update_separation_controls)
@@ -427,9 +449,10 @@ class Application(ttk.Frame):
         ttk.Label(self.gpu_frame, text="GPU index", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
         self.gpu_entry = ttk.Entry(self.gpu_frame, textvariable=self.gpu_index, width=4, style="App.TEntry")
         self.gpu_entry.pack(side="left")
-        Tooltip(self.gpu_option, "Optional GPU acceleration for UVR or six-stem separation; piano and vocal transcription still use CPU. "
-                "Compatible DirectX 12 NVIDIA, AMD and Intel GPUs can work. CPU remains the default.")
-        Tooltip(self.gpu_entry, "DirectML adapter index, normally 0. On computers with multiple GPUs, try 1 if 0 selects the wrong one.")
+        Tooltip(self.gpu_option, "Optional GPU acceleration for separation. pymss uses NVIDIA CUDA; UVR and six-stem use DirectML. "
+                "Transcription still uses its own device settings. CPU is the default.")
+        Tooltip(self.gpu_entry, "GPU index, normally 0. CUDA and DirectML may number devices differently.")
+        card = cleanup_card
         self.smooth_option = ttk.Checkbutton(card, text="Smooth fragmented notes (keep original MIDI)",
                                              variable=self.smooth_notes, style="App.TCheckbutton",
                                              command=self.update_smoothing_controls)
@@ -460,6 +483,7 @@ class Application(ttk.Frame):
         self.lint_option.grid(row=16, column=0, sticky="w", pady=(10, 0))
         Tooltip(self.lint_option, "Writes a separate text report of possible short or overlapping notes. Suggestions can be intentional; MIDI is unchanged.")
 
+        card = score_card
         self.score_option = ttk.Checkbutton(card, text="Create formatted MusicXML score", variable=self.musescore_export, style="App.TCheckbutton")
         self.score_option.grid(row=17, column=0, sticky="w", pady=(10, 0))
         score_pdf = ttk.Frame(card, style="Card.TFrame")
@@ -511,21 +535,23 @@ class Application(ttk.Frame):
         key_picker.pack(side="left")
         Tooltip(key_picker, "Auto estimates a key when there is enough evidence. Review key signatures and enharmonic spelling.")
 
+        card = separation_card
         self.stem_settings = ttk.Frame(card, style="Card.TFrame")
         self.stem_settings.grid(row=25, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Label(self.stem_settings, text="Stem model", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
+        self.stem_settings.columnconfigure(1, weight=1)
+        ttk.Label(self.stem_settings, text="Stem model", style="CardLabel.TLabel").grid(row=0, column=0, sticky='w', padx=(0, 6))
         self.stem_model_picker = ttk.Combobox(self.stem_settings, textvariable=self.stem_model,
             values=["Built-in six-stem", "Custom six-stem ONNX", "pymss model"], state="readonly", width=23)
-        self.stem_model_picker.pack(side="left", padx=(0, 6))
+        self.stem_model_picker.grid(row=0, column=1, sticky='ew', padx=(0, 8))
         self.stem_model_picker.bind('<<ComboboxSelected>>', self.update_separation_controls)
         self.custom_stem_button = ttk.Button(self.stem_settings, text="Choose ONNX...", style="Link.TButton", command=self.choose_custom_stem_model)
-        self.custom_stem_button.pack(side="left", padx=(0, 8))
+        self.custom_stem_button.grid(row=0, column=2, sticky='w', padx=(0, 8))
         self.pymss_button = ttk.Button(self.stem_settings, text="Browse pymss models...", style="Link.TButton", command=self.show_pymss_models)
-        self.pymss_button.pack(side="left", padx=(0, 8))
-        ttk.Label(self.stem_settings, text="Stem", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
+        self.pymss_button.grid(row=1, column=1, sticky='w', pady=(6, 0))
+        ttk.Label(self.stem_settings, text="Stem", style="CardLabel.TLabel").grid(row=2, column=0, sticky='w', padx=(0, 6), pady=(6, 0))
         self.stem_choice_picker = ttk.Combobox(self.stem_settings, textvariable=self.stem_choice,
             values=["All", "Piano", "Vocals", "Drums", "Bass", "Guitar", "Other", "Instrumental", "Accompaniment"], state="readonly", width=13)
-        self.stem_choice_picker.pack(side="left")
+        self.stem_choice_picker.grid(row=2, column=1, sticky='w', pady=(6, 0))
         Tooltip(self.custom_stem_button, "Choose a six-stem ONNX model with the same mix/stems interface and output order as the built-in HT-Demucs model. Other architectures are not supported.")
         Tooltip(self.stem_choice_picker, "Choose the stem to transcribe or save. For pymss you may type another stem name; All is available in standalone separation. Models may still compute unselected stems.")
         self.pymss_selected_label = ttk.Label(card, textvariable=self.pymss_model, style="CardHint.TLabel")
@@ -537,8 +563,8 @@ class Application(ttk.Frame):
         self.pymss_selected_label.grid_remove()
         self.save_stem_option.grid_remove()
 
-        self.settings_card = ttk.Frame(body, style="Card.TFrame", padding=(22, 12))
-        self.settings_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.settings_card = ttk.Frame(self.sections, style="Card.TFrame", padding=(20, 14))
+        self.sections.add(self.settings_card, text="Model settings")
         self.settings_card.columnconfigure(0, weight=1)
         self.advanced_button = ttk.Button(self.settings_card, text="Advanced settings   +", style="Link.TButton",
                                           command=self.toggle_advanced)
@@ -563,11 +589,36 @@ class Application(ttk.Frame):
                   wraplength=740).grid(row=2, column=0, columnspan=3, sticky="w", pady=(5, 0))
         self.advanced.grid_remove()
 
+        queue_card = ttk.Frame(body, style="Card.TFrame", padding=(20, 14))
+        self.queue_card = queue_card
+        queue_card.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        queue_card.columnconfigure(0, weight=1)
+        ttk.Label(queue_card, text="QUEUE", style="Section.TLabel").grid(row=0, column=0, sticky='w')
+        ttk.Label(queue_card, text="Each job keeps the settings selected when it was added.", style="CardHint.TLabel").grid(row=1, column=0, sticky='w', pady=(4, 8))
+        queue_list = ttk.Frame(queue_card, style="Card.TFrame")
+        queue_list.grid(row=2, column=0, sticky='ew')
+        queue_list.columnconfigure(0, weight=1)
+        self.queue_view = ttk.Treeview(queue_list, columns=('file', 'mode', 'state'), show='headings', height=4, selectmode='browse', style='Queue.Treeview')
+        for name, title, width in (('file', 'File', 320), ('mode', 'Task', 190), ('state', 'Status', 160)):
+            self.queue_view.heading(name, text=title)
+            self.queue_view.column(name, width=width, minwidth=80, stretch=True)
+        self.queue_view.grid(row=0, column=0, sticky='ew')
+        queue_scroll = ttk.Scrollbar(queue_list, orient='vertical', command=self.queue_view.yview, style='App.Vertical.TScrollbar')
+        queue_scroll.grid(row=0, column=1, sticky='ns')
+        self.queue_view.configure(yscrollcommand=queue_scroll.set)
+        self.queue_view.bind('<<TreeviewSelect>>', self._show_selected_job)
+        queue_actions = ttk.Frame(queue_card, style='Card.TFrame')
+        queue_actions.grid(row=3, column=0, sticky='w', pady=(8, 0))
+        ttk.Button(queue_actions, text='Add multiple files...', style='Link.TButton', command=self.browse_queue_files).pack(side='left', padx=(0, 18))
+        ttk.Button(queue_actions, text='Remove selected', style='Link.TButton', command=self.remove_queued_job).pack(side='left', padx=(0, 18))
+        ttk.Button(queue_actions, text='Clear finished', style='Link.TButton', command=self.clear_finished_jobs).pack(side='left')
+
         footer = ttk.Frame(body, style="Root.TFrame")
-        footer.grid(row=3, column=0, sticky="ew", pady=(18, 0))
+        self.footer = footer
+        footer.grid(row=4, column=0, sticky="ew", pady=(18, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, text="02  /  TRANSCRIBE", style="Eyebrow.TLabel").grid(row=0, column=0, sticky="w")
-        self.start_button = ttk.Button(footer, text="Start transcription  →", style="Primary.TButton", command=self.start)
+        ttk.Label(footer, text="READY TO PROCESS", style="Eyebrow.TLabel").grid(row=0, column=0, sticky="w")
+        self.start_button = ttk.Button(footer, text="Add to queue  →", style="Primary.TButton", command=self.enqueue_current)
         self.start_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
         ttk.Label(footer, textvariable=self.status, style="Subtitle.TLabel", wraplength=550).grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.progress = ttk.Progressbar(footer, mode="indeterminate", style="App.Horizontal.TProgressbar")
@@ -577,10 +628,16 @@ class Application(ttk.Frame):
         self.open_button.grid(row=3, column=1, sticky="e", pady=(12, 0))
         self.log_button = ttk.Button(footer, text="Show details  +", style="RootLink.TButton", command=self.toggle_log)
         self.log_button.grid(row=3, column=0, sticky="w", pady=(12, 0))
-        self.log = tk.Text(footer, height=7, wrap="word", state="disabled", bg="#0b0f19", fg=MUTED,
+        self.log_frame = ttk.Frame(footer, style='Root.TFrame')
+        self.log_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.log_frame.columnconfigure(0, weight=1)
+        self.log = tk.Text(self.log_frame, height=9, wrap="word", state="disabled", bg="#0b0f19", fg=MUTED,
                            insertbackground=TEXT, relief="flat", font=("Consolas", 9), padx=12, pady=10)
-        self.log.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        self.log.grid_remove()
+        self.log.grid(row=0, column=0, sticky="ew")
+        log_scroll = ttk.Scrollbar(self.log_frame, orient='vertical', command=self.log.yview, style='App.Vertical.TScrollbar')
+        log_scroll.grid(row=0, column=1, sticky='ns')
+        self.log.configure(yscrollcommand=log_scroll.set)
+        self.log_frame.grid_remove()
         self.mode_changed()
         self.after(100, self.poll)
         master.protocol("WM_DELETE_WINDOW", self.close)
@@ -591,6 +648,12 @@ class Application(ttk.Frame):
         style.theme_use("clam")
         style.configure("Root.TFrame", background=BG)
         style.configure("Card.TFrame", background=PANEL)
+        style.configure('App.TNotebook', background=BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure('App.TNotebook.Tab', background=FIELD, foreground=MUTED, padding=(18, 10), font=('Segoe UI', 10, 'bold'), borderwidth=0)
+        style.map('App.TNotebook.Tab', background=[('selected', PANEL), ('active', '#35415a')], foreground=[('selected', TEXT)])
+        style.configure('Queue.Treeview', background=FIELD, fieldbackground=FIELD, foreground=TEXT, borderwidth=0, rowheight=29, font=('Segoe UI', 10))
+        style.map('Queue.Treeview', background=[('selected', '#6357ad')], foreground=[('selected', TEXT)])
+        style.configure('Queue.Treeview.Heading', background=PANEL, foreground=MUTED, relief='flat', font=('Segoe UI', 9, 'bold'))
         for name, background, foreground, font in (
             ("Eyebrow.TLabel", BG, ACCENT, ("Segoe UI", 9, "bold")),
             ("Title.TLabel", BG, TEXT, ("Segoe UI", 25, "bold")),
@@ -641,6 +704,8 @@ class Application(ttk.Frame):
     def _drop_path(self, event, directory=False):
         try:
             paths = self.master.tk.splitlist(event.data)
+            if len(paths) > 1 and not directory:
+                return 'copy' if self.enqueue_files(paths) else 'refuse_drop'
             if len(paths) != 1:
                 raise ValueError('Drop one path at a time.')
             path = Path(paths[0])
@@ -673,7 +738,7 @@ class Application(ttk.Frame):
         else:
             self.stem_settings.grid_remove()
             self.pymss_selected_label.grid_remove()
-        self.start_button.configure(text="Separate audio  →" if mode == "stems" else "Start transcription  →")
+        self.start_button.configure(text="Add to queue  →")
         if mode == "music":
             selected_model = self.music_model.get()
             if selected_model != self.current_model:
@@ -850,10 +915,162 @@ class Application(ttk.Frame):
     def toggle_log(self):
         self.log_open = not self.log_open
         if self.log_open:
-            self.log.grid()
+            self.log_frame.grid()
         else:
-            self.log.grid_remove()
+            self.log_frame.grid_remove()
         self.log_button.configure(text="Hide details  −" if self.log_open else "Show details  +")
+
+    def _mousewheel(self, event):
+        # Text and queue widgets have their own scrolling; do not move the form too.
+        widget = event.widget
+        while widget is not None:
+            if widget in (getattr(self, 'log', None), getattr(self, 'queue_view', None)):
+                return
+            widget = getattr(widget, 'master', None)
+        self.canvas.yview_scroll(-int(event.delta / 120), 'units')
+
+    def _navigate(self, destination):
+        if destination == 'input':
+            self.canvas.yview_moveto(0)
+            return
+        if destination == 'details' and not self.log_open:
+            self.toggle_log()
+        self.update_idletasks()
+        target = self.queue_card if destination == 'queue' else self.footer
+        self.canvas.yview_moveto(target.winfo_y() / max(1, self.body.winfo_height()))
+
+    def _form_snapshot(self):
+        excluded = {'status', 'description', 'defaults_description'}
+        variables = {name: value.get() for name, value in vars(self).items()
+                     if isinstance(value, tk.Variable) and name not in excluded}
+        return {'variables': variables, 'thresholds': {key: value.get() for key, value in self.thresholds.items()}}
+
+    def _apply_snapshot(self, snapshot):
+        for name, value in snapshot['variables'].items():
+            getattr(self, name).set(value)
+        for key, value in snapshot['thresholds'].items():
+            self.thresholds[key].set(value)
+
+    def enqueue_current(self):
+        source = Path(self.source.get()).expanduser()
+        destination = Path(self.destination.get()).expanduser()
+        if not self.source.get().strip() or not source.is_file():
+            messagebox.showerror('Input file', 'Choose an existing input file.')
+            return
+        if not self.destination.get().strip() or not destination.is_dir():
+            messagebox.showerror('Output folder', 'Choose an existing output folder.')
+            return
+        self._job_sequence += 1
+        job = {'id': str(self._job_sequence), 'snapshot': self._form_snapshot(), 'source': str(source),
+               'mode': self.mode.get(), 'state': 'Waiting', 'log': '', 'output': None}
+        self.jobs.append(job)
+        self.queue_view.insert('', 'end', iid=job['id'], values=(source.name, job['mode'], job['state']))
+        if self.active_job is None and not self.running and not self.optional_installing:
+            self._start_next_job()
+        else:
+            self.status.set(f"Added {source.name} to the queue.")
+
+    def browse_queue_files(self):
+        midi = MODES[self.mode.get()][0] == 'beat'
+        kinds = [('MIDI files', '*.mid *.midi'), ('All files', '*.*')] if midi else [
+            ('Audio files', '*.wav *.flac *.mp3 *.ogg *.aiff *.aif'), ('All files', '*.*')]
+        paths = filedialog.askopenfilenames(filetypes=kinds, initialdir=self.input_folder or None)
+        if paths:
+            self.enqueue_files(paths)
+
+    def enqueue_files(self, paths):
+        paths = [Path(path) for path in paths]
+        if not paths or any(not path.is_file() for path in paths):
+            self.status.set('Drop existing files to add them to the queue.')
+            return False
+        if not self.destination.get().strip() or not Path(self.destination.get()).expanduser().is_dir():
+            messagebox.showerror('Output folder', 'Choose an existing output folder.')
+            return False
+        for path in paths:
+            self.source.set(str(path))
+            self.enqueue_current()
+        self.source.set(str(paths[0]))
+        self.input_folder = str(paths[0].parent)
+        self.save_folders(input_folder=self.input_folder)
+        return True
+
+    def _update_job(self, job, state):
+        job['state'] = state
+        if self.queue_view.exists(job['id']):
+            self.queue_view.item(job['id'], values=(Path(job['source']).name, job['mode'], state))
+
+    def _start_next_job(self):
+        if self.active_job is not None or self.running or self.optional_installing:
+            return
+        job = next((item for item in self.jobs if item['state'] == 'Waiting'), None)
+        if job is None:
+            return
+        self.active_job = job
+        self._update_job(job, 'Starting')
+        self.queue_view.selection_set(job['id'])
+        self.queue_view.see(job['id'])
+        self._show_selected_job()
+        self._start_active_job()
+
+    def _start_active_job(self):
+        job = self.active_job
+        if job is None:
+            return
+        current = self._form_snapshot()
+        try:
+            self._apply_snapshot(job['snapshot'])
+            self.start()
+        except Exception as exc:
+            job['log'] += ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            self._update_job(job, 'Needs attention')
+            self.status.set('Could not start the queued job. Open details for more information.')
+            self.active_job = None
+            self._show_selected_job()
+            self.after_idle(self._start_next_job)
+            return
+        finally:
+            self._apply_snapshot(current)
+        if self.running:
+            job['output'] = self.output_folder
+            self._update_job(job, 'Running')
+            self.start_button.configure(state='normal')
+        elif self.optional_installing:
+            self._update_job(job, 'Installing model')
+            self.start_button.configure(state='normal')
+        else:
+            self._update_job(job, 'Needs attention')
+            self.active_job = None
+            self.after_idle(self._start_next_job)
+
+    def _show_selected_job(self, event=None):
+        selection = self.queue_view.selection()
+        job = next((item for item in self.jobs if selection and item['id'] == selection[0]), None)
+        if job is None:
+            return
+        self.log.configure(state='normal')
+        self.log.delete('1.0', 'end')
+        self.log.insert('end', job['log'])
+        self.log.see('end')
+        self.log.configure(state='disabled')
+        self.open_button.configure(state='normal' if job['output'] and job['output'].is_dir() else 'disabled')
+
+    def remove_queued_job(self):
+        selection = self.queue_view.selection()
+        job = next((item for item in self.jobs if selection and item['id'] == selection[0]), None)
+        if job is None:
+            return
+        if job is self.active_job:
+            self.status.set('The active job cannot be removed while it is running.')
+            return
+        self.queue_view.delete(job['id'])
+        self.jobs.remove(job)
+        self.status.set('Removed job from the queue.')
+
+    def clear_finished_jobs(self):
+        for job in self.jobs[:]:
+            if job is not self.active_job and job['state'] != 'Waiting':
+                self.queue_view.delete(job['id'])
+                self.jobs.remove(job)
 
     def browse_input(self):
         midi = MODES[self.mode.get()][0] == "beat"
@@ -1644,10 +1861,14 @@ class Application(ttk.Frame):
                     if "UserWarning:" in value and any(text in value for text in
                             ("Piano hand spans", "Dense overlapping piano notes", "Percussion tracks are omitted", "Score simplification omitted", "Score simplification shortened", "Audio bar alignment", "Score key estimated")):
                         self.score_warnings.append(value.split("UserWarning:", 1)[1].strip())
-                    self.log.configure(state="normal")
-                    self.log.insert("end", value)
-                    self.log.see("end")
-                    self.log.configure(state="disabled")
+                    if self.active_job is not None:
+                        self.active_job['log'] += value
+                    selection = self.queue_view.selection()
+                    if self.active_job is None or not selection or selection[0] == self.active_job['id']:
+                        self.log.configure(state="normal")
+                        self.log.insert("end", value)
+                        self.log.see("end")
+                        self.log.configure(state="disabled")
                     continue
                 if kind == "optional_install_done":
                     model, return_code, output = value
@@ -1655,10 +1876,18 @@ class Application(ttk.Frame):
                     self.start_button.configure(state="normal")
                     if return_code == 0:
                         self.status.set(f"{model} is ready. Starting transcription...")
-                        self.start()
+                        if self.active_job is not None:
+                            self._start_active_job()
+                        else:
+                            self.start()
                     else:
                         self.status.set(f"Could not install {model}.")
                         messagebox.showerror(f"{model} setup failed", output or "Package installation failed.")
+                        if self.active_job is not None:
+                            self.active_job['log'] += output
+                            self._update_job(self.active_job, 'Setup failed')
+                            self.active_job = None
+                            self.after_idle(self._start_next_job)
                     continue
                 if kind == 'pymss_install_done':
                     self.optional_installing = False
@@ -1724,22 +1953,39 @@ class Application(ttk.Frame):
                     self.status.set("Transcription failed. Open details for more information.")
                     if not self.log_open:
                         self.toggle_log()
-                if kind == "done" and value[0] == 0 and self.score_warnings:
+                if kind == "done" and value[0] == 0 and self.score_warnings and self.active_job is None:
                     messagebox.showwarning("Score needs review", "\n\n".join(self.score_warnings))
+                if self.active_job is not None:
+                    job = self.active_job
+                    if kind == 'error':
+                        job['log'] += str(value) + '\n'
+                    if self.score_warnings:
+                        job['log'] += '\nScore review:\n' + '\n'.join(self.score_warnings) + '\n'
+                    good = kind == 'done' and value[0] == 0 and self.status.get().startswith('Finished.')
+                    self._update_job(job, 'Finished' if good else 'Needs attention')
+                    self.active_job = None
+                    self._show_selected_job()
+                self.after_idle(self._start_next_job)
         except queue.Empty:
             pass
         self.after(100, self.poll)
 
     def open_results(self):
-        if self.output_folder and self.output_folder.is_dir():
+        selection = self.queue_view.selection()
+        selected = next((job for job in self.jobs if selection and job['id'] == selection[0]), None)
+        folder = selected['output'] if selected else self.output_folder
+        if folder and folder.is_dir():
             try:
-                os.startfile(str(self.output_folder))
+                os.startfile(str(folder))
             except OSError as exc:
                 messagebox.showerror("Cannot open results", str(exc))
 
     def close(self):
-        if self.running:
+        if self.running or self.optional_installing:
             messagebox.showinfo("Transcription running", "Wait for transcription to finish before closing.")
+            return
+        if any(job['state'] == 'Waiting' for job in self.jobs) and not messagebox.askyesno(
+                'Jobs waiting', 'Close Omnizart and discard the waiting jobs?'):
             return
         self.master.destroy()
 
