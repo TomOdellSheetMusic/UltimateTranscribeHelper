@@ -1,0 +1,96 @@
+# Reference evaluation follow-up
+
+Two short excerpts were compared against the author's hand-written scores.
+Their recordings and scores remain on the local machine. This is a small pilot,
+not a general model ranking or proof that the arrangements reproduce every
+performed note.
+
+The evaluation script `scripts/evaluate_reference.py` reads supported MuseScore
+archives and compares note onsets with a shared recording alignment. It rejects
+tuplets, repeats, unsupported spanners, position changes, meter changes and
+other notation it cannot safely interpret. It currently supports 3/4 and 4/4,
+constant tempo and a subset of MuseScore 2 and 3 files. Legacy ties are counted
+as one attack. These restrictions are intentional; more reference coverage is
+needed before treating the collection as a benchmark.
+
+Unlike the earlier pilot, alignment here maximizes the recording's audio onset
+strength at the written note times. It does not use any transcription model's
+output. The search uses one constant time offset and one tempo scale over each
+15-second excerpt. Search ranges were chosen after examining the recordings and
+the Transkun predictions, so they are not a blind test. Repeated patterns and
+non-piano instruments can produce incorrect alignment; visual or listening review
+is still necessary. A constant tempo cannot represent rubato. The earlier
+pilot's fitted values and a first-half-only fit demonstrate how drastically a
+small tempo error can alter the resulting accuracy.
+
+Notes are matched one-to-one by pitch within 100 ms of the adjusted reference
+onset, maximizing the number of matches independently for each pitch. Precision
+is matches divided by predicted onsets; recall is matches divided by reference
+onsets. Durations, bar lines, voice assignment, playability and appearance are
+not measured. The mixture includes non-piano sounds; a different arrangement,
+missing reference notes, tempo changes and audio alignment errors all affect
+the scores.
+
+## First 15 seconds of Best of Friends
+
+The reference is `Best of Friends (piano only).mscz`; the audio is the original
+stereo MP3. Fitted offset: 1.04 s, scale: 1.022. There are 96 reference attacks.
+Models ran on the first 30 seconds of audio with their bundled default settings.
+
+| Input and model | Predicted | Matched | Precision | Recall | F1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original mix, Transkun | 104 | 67 | .644 | .698 | .670 |
+| Original mix, Transkun V2 Aug | 106 | 67 | .632 | .698 | .663 |
+| Original mix, Pedal Piano | 116 | 71 | .612 | .740 | .670 |
+| Original mix, Basic Pitch | 125 | 67 | .536 | .698 | .606 |
+| Six-stem isolated piano, Transkun | 101 | 64 | .634 | .667 | .650 |
+
+The isolated piano result does not improve this excerpt under this metric. It
+does not establish that isolation is worse on other songs or for listening.
+
+## First 15 seconds of I Know
+
+The reference is `I know.mscz`; the audio is the original stereo MP3. Fitted
+offset: 4.00 s, scale: 1.000. There are 115 reference attacks.
+
+| Model on original mix | Predicted | Matched | Precision | Recall | F1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Transkun | 102 | 80 | .784 | .696 | .737 |
+| Transkun V2 Aug | 111 | 83 | .748 | .722 | .735 |
+| Pedal Piano | 119 | 83 | .697 | .722 | .709 |
+| Basic Pitch | 126 | 76 | .603 | .661 | .631 |
+
+## Notation findings
+
+The first eight measures of the two-staff Best of Friends reference contain 88
+note events in the simple extraction used for a preliminary staff check. Given
+those already quantized reference notes, the current heuristic assigned all 88
+to the same staves as the reference. This does not evaluate audio transcription
+or establish accuracy on difficult hand crossings, pedal, or other pieces.
+
+The reference collection includes C-sharp-major scores and several G-flat-major
+scores. The exporter previously used only a global sharp/flat preference,
+which could spell key-signature notes incorrectly. It now spells diatonic notes
+according to the signature, including B-sharp, E-sharp, C-flat and F-flat, and
+computes their octave without changing the sounding MIDI pitch. Chromatic
+spelling still needs contextual harmonic analysis.
+
+The reference scores also contain tuplets and overlapping voices. Adaptive
+rhythm spelling and tuplets remain unsupported by the exporter's fixed
+sixteenth grid. This evaluation does not establish that generated scores are
+readable, and does not address that limitation.
+
+## Reproduction
+
+Run with the project runtime, supplying local paths to the score, recording and
+already generated MIDI files. For example:
+
+```powershell
+.\.runtime311\python.exe scripts\evaluate_reference.py SCORE.mscz MODEL1.mid MODEL2.mid --seconds 15 --align-audio AUDIO.wav --offset-range 0 2
+```
+
+The offset range must cover the recording time where the score starts. For a
+manually verified alignment, use `--offset` and `--scale` instead. The optional
+`--start` selects a later written-score window. Keep the same alignment and
+window for all models, and validate that the score and audio are the same
+arrangement. Output and reference data are not included in the repository.
