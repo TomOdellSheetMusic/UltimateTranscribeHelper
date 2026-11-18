@@ -11,7 +11,6 @@ def triplet_beats(onsets):
     """
     evidence = defaultdict(set)
     boundaries = set()
-    straight = set()
     for position in onsets:
         if not math.isfinite(position) or position < 0:
             continue
@@ -21,17 +20,14 @@ def triplet_beats(onsets):
             boundaries.add(beat)
         elif phase >= .93:
             boundaries.add(beat + 1)
-        if any(abs(phase - part) <= .03 for part in (.25, .5, .75)):
-            straight.add(beat)
         for third in (1, 2):
             if abs(phase - third / 3) <= .055 and abs(phase - round(phase * 4) / 4) >= .045:
                 evidence[beat].add(third)
     selected = set()
     for beat, thirds in evidence.items():
-        if beat in boundaries and beat not in straight and thirds == {1, 2}:
+        if beat in boundaries and thirds == {1, 2}:
             selected.add(beat)
-        if (beat in boundaries and beat not in straight and beat + 1 not in straight and
-                2 in thirds and 1 in evidence.get(beat + 1, set())):
+        if beat in boundaries and 2 in thirds and 1 in evidence.get(beat + 1, set()):
             selected.update((beat, beat + 1))
     return selected
 
@@ -40,13 +36,20 @@ def quantize(position, triplets):
     """Return a score position in twelfths of a quarter note."""
     position = max(0.0, position)
     beat = int(math.floor(position))
-    subdivisions = 3 if beat in triplets else 4
-    return beat * 12 + round((position - beat) * subdivisions) * (12 // subdivisions)
+    phase = position - beat
+    straight = round(phase * 4) * 3
+    if beat not in triplets:
+        return beat * 12 + straight
+    third = round(phase * 3) * 4
+    # Keep independently played straight notes in a triplet beat when their
+    # timing is clearly closer to the straight grid.
+    choice = straight if abs(phase - straight / 12) + .02 < abs(phase - third / 12) else third
+    return beat * 12 + choice
 
 
 def next_position(position, triplets):
     beat = position // 12
-    step = 4 if beat in triplets else 3
+    step = 4 if beat in triplets and position % 3 else 3
     return min((beat + 1) * 12, (position // step + 1) * step)
 
 
@@ -60,7 +63,8 @@ def pieces(start, end, measure_length):
               (24, 'half', False, False), (18, 'quarter', True, False),
               (12, 'quarter', False, False), (9, 'eighth', True, False),
               (8, 'quarter', False, True), (6, 'eighth', False, False),
-              (4, 'eighth', False, True), (3, '16th', False, False))
+              (4, 'eighth', False, True), (3, '16th', False, False),
+              (2, '16th', False, True), (1, '32nd', False, True))
     best = {end: (0, None)}
     for position in range(end - 1, start - 1, -1):
         bar_end = (position // measure_length + 1) * measure_length
@@ -69,7 +73,7 @@ def pieces(start, end, measure_length):
             if right > min(end, bar_end) or right not in best:
                 continue
             if triplet:
-                if position % 4:
+                if position % min(size, 4):
                     continue
             elif position % 3 or (size >= 12 and position % 12):
                 continue

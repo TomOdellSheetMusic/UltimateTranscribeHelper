@@ -24,8 +24,7 @@ class AdaptiveRhythmTests(unittest.TestCase):
     def test_evidence_requires_multiple_distinct_third_positions(self):
         self.assertEqual(triplet_beats([0, .25, .5, .75, 1]), set())
         self.assertEqual(triplet_beats([0, .333, 1, 1.5]), set())
-        # Avoid moving a simultaneous straight-eighth line to a triplet grid.
-        self.assertEqual(triplet_beats([0, 1/3, 1/2, 2/3]), set())
+        self.assertEqual(triplet_beats([0, 1/3, 1/2, 2/3]), {0})
         # These measured Best of Friends onsets are expressive straight time,
         # not a quarter-note triplet despite two third-like positions.
         self.assertEqual(triplet_beats([28.016, 28.312, 28.947, 29.401, 29.43, 29.479, 29.64, 29.957]), set())
@@ -103,6 +102,32 @@ class AdaptiveRhythmTests(unittest.TestCase):
             self.assertEqual([n.findtext('duration') for n in notes], ['4'] * 3 + ['3'] * 4)
             self.assertEqual([n.findtext('type') for n in notes], ['eighth'] * 3 + ['16th'] * 4)
             self.assertEqual(sum(n.find('time-modification') is not None for n in notes), 3)
+
+    def test_simultaneous_straight_and_triplet_hands_keep_both_rhythms(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            midi = mido.MidiFile(ticks_per_beat=480)
+            events = []
+            for start, end, pitch in ((0,160,72),(160,320,74),(320,480,76),
+                                      (0,240,48),(240,480,50)):
+                events.extend(((start, 1, pitch), (end, 0, pitch)))
+            track, previous = mido.MidiTrack(), 0
+            for tick, on, pitch in sorted(events):
+                track.append(mido.Message('note_on' if on else 'note_off', note=pitch,
+                                          velocity=80 if on else 0, time=tick - previous))
+                previous = tick
+            midi.tracks.append(track)
+            source, score = root / 'poly.mid', root / 'score.musicxml'
+            midi.save(source)
+            export_score(source, score, tempo=120, score_key='C')
+            xml = ET.parse(score).getroot()
+            notes = [n for n in xml.findall('.//note') if n.find('pitch') is not None]
+            upper = [n for n in notes if n.findtext('staff') == '1']
+            lower = [n for n in notes if n.findtext('staff') == '2']
+            self.assertEqual([n.findtext('duration') for n in upper], ['4'] * 3)
+            self.assertEqual([n.findtext('duration') for n in lower], ['6'] * 2)
+            self.assertTrue(all(n.find('time-modification') is not None for n in upper))
+            self.assertTrue(all(n.find('time-modification') is None for n in lower))
 
     def test_reference_style_quarter_triplet_chords_stay_on_one_staff(self):
         # Three quarter-note triplet chords from the rhythm and pitches in
