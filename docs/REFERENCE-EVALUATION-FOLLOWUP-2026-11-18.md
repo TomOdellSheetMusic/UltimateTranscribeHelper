@@ -118,7 +118,10 @@ starting at recording time zero instead of inserting the part of the bar that
 precedes the recording. A regression test checks the shorter MusicXML duration,
 downbeat position and preservation of the input MIDI. Pickup-note handling is
 also covered by the existing beat-grid tests. A MuseScore playback round trip of
-this new case has not yet been verified.
+this new case has not yet been verified. On the Best of Friends pilot the
+partial opening measure now lasts approximately 1.022 seconds instead of a
+full 1.817-second 4/4 bar; the original first detected attack is at 1.056
+seconds. The remaining difference is partly due to sixteenth-note quantization.
 
 ## Reproduction
 
