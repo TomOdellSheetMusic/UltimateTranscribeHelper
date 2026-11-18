@@ -21,7 +21,7 @@ MODES = {
     "Vocal notes": ("vocal", "Audio", "MIDI + CSV"),
     "Vocal pitch contour": ("vocal-contour", "Audio", "CSV + WAV"),
     "Beats from MIDI": ("beat", "MIDI", "MIDI + CSV"),
-    "Separate stems (audio)": ("stems", "Audio", "Six WAV stems"),
+    "Separate stems (audio)": ("stems", "Audio", "WAV stems"),
 }
 
 BG = "#101421"
@@ -747,7 +747,7 @@ class Application(ttk.Frame):
             self.advanced_button.configure(text="Advanced settings   +")
             self.description.set(f"Input: {input_kind}  •  Output: {output_kind}. This mode uses its model defaults.")
             if mode == "stems":
-                self.description.set("Separate drums, bass, vocals, guitar, piano and other into WAV files. Experimental.")
+                self.description.set("Choose a separation model and save all or selected audio stems as WAV files.")
                 self.update_separation_controls()
 
     def toggle_advanced(self):
