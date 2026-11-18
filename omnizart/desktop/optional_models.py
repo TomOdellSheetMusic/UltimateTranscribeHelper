@@ -17,7 +17,7 @@ PACKAGES = {
 
 # Revision 2 repairs YourMT3's Transformers constraint and gives the score
 # backends their own CPU PyTorch, including in nested Python environments.
-READY_REVISIONS = {"YourMT3": "2", "MuScriptor": "ready", "Piano SVSep": "2", "Beat This": "2", "pymss": "1", "pymss CUDA": "1"}
+READY_REVISIONS = {"YourMT3": "2", "MuScriptor": "ready", "Piano SVSep": "2", "Beat This": "3", "pymss": "1", "pymss CUDA": "1"}
 SVSEP_COMMIT = "1462e7c28d7adaae033150883a7cb00238ee364a"
 SVSEP_SHA256 = "1f71ab8b6c7cd271e18adfba5ccbcd634a8530a44e46aabede27e15ce84dbe32"
 SVSEP_URL = f"https://raw.githubusercontent.com/CPJKU/piano_svsep/{SVSEP_COMMIT}/pretrained_models/model.ckpt"
@@ -114,7 +114,7 @@ def install(model):
                    "-f", "https://data.pyg.org/whl/torch-2.5.0+cpu.html"]
         elif model == "Beat This":
             pip = [str(python_path(model)), "-m", "pip", "install", "beat-this==1.1.0",
-                   "einops==0.8.2", "rotary-embedding-torch==0.9.2"]
+                   "einops==0.8.2", "rotary-embedding-torch==0.9.2", "soundfile==0.12.1"]
         else:
             pip = [str(python_path(model)), "-m", "pip", "install", PACKAGES[model]]
     else:
@@ -128,7 +128,10 @@ def install(model):
         commands.append(install_torch)
     commands.append(pip)
     if model in ("Piano SVSep", "Beat This", "pymss"):
-        commands.append([str(python_path(model)), "-c", "import torch; assert torch.__version__.split('+')[0] == '2.5.1' and torch.version.cuda is None, 'This model requires CPU PyTorch 2.5.1.'"])
+        verify = "import torch; assert torch.__version__.split('+')[0] == '2.5.1' and torch.version.cuda is None, 'This model requires CPU PyTorch 2.5.1.'"
+        if model == 'Beat This':
+            verify += "; import torchaudio; assert 'soundfile' in torchaudio.list_audio_backends(), 'Beat This requires the SoundFile audio backend.'"
+        commands.append([str(python_path(model)), "-c", verify])
     if model == "pymss CUDA":
         commands.append([str(python_path(model)), "-c", "import torch; assert torch.__version__.split('+')[0] == '2.5.1' and torch.version.cuda is not None, 'CUDA PyTorch is required.'"])
     if model in ("pymss", "pymss CUDA"):

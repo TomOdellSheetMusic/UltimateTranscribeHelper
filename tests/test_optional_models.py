@@ -80,7 +80,7 @@ class OptionalModelsTest(unittest.TestCase):
             python = optional_models.python_path('Beat This')
             python.parent.mkdir(parents=True)
             python.touch()
-            (Path(directory) / '.ready').write_text('2', encoding='utf-8')
+            (Path(directory) / '.ready').write_text('3', encoding='utf-8')
             (Path(directory) / '.runtime-source').write_text(optional_models._runtime_identity(), encoding='utf-8')
             (Path(directory) / 'model.ckpt').write_bytes(b'bad')
             self.assertFalse(optional_models.ready('Beat This'))
@@ -112,6 +112,7 @@ class OptionalModelsTest(unittest.TestCase):
                     self.assertEqual('torchaudio==2.5.1+cpu' in torch_install, model == 'Beat This')
                     self.assertIn('install', dependencies)
                     self.assertEqual('pandas==2.2.3' in dependencies, model == 'Piano SVSep')
+                    self.assertEqual('soundfile==0.12.1' in dependencies, model == 'Beat This')
                     self.assertIn('torch.version.cuda is None', verify[-1])
                     self.assertEqual(verify_model.call_count, int(model == 'Piano SVSep'))
 
