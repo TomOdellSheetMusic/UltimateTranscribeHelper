@@ -25,6 +25,7 @@ class ScoreButtonTests(unittest.TestCase):
                 piano_only=var(False), input_is_piano=var(False), remove_vocals=var(False), include_vocals=var(False),
                 separator_model=var('UVR MDX (recommended)'), use_gpu=var(False), gpu_index=var('0'),
                 smooth_notes=var(False), remove_short_notes=var(False), compare_enabled=var(False),
+                split_hands=var(False),
                 musescore_export=var(True), align_bars=var(False), score_downbeat=var('Auto'), score_meter=var('Auto'), score_key=var('Bb'), neural_staff=var(False), simplify_score=var(True), score_tempo=var('154'), pdf_export=var(False),
                 musescore_path=var(''), lint_notes=var(False), save_folders=Mock(),
                 log=Mock(), start_button=Mock(), open_button=Mock(), progress=Mock(), status=Mock(),

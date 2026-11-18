@@ -11,6 +11,14 @@ find separation, score, cleanup and model options.
 Results for the same input name share a folder in your chosen
 output folder; new runs use numbered file names and do not replace earlier ones.
 
+To create separate hand tracks for a piano-learning application, select "Save
+MIDI with left and right hand tracks" under MIDI cleanup before transcription.
+This saves an additional `_hands.mid` and leaves the original MIDI unchanged.
+To process an existing file, choose "Split piano MIDI into hands" as the task.
+The input must contain one pitched piano track/channel; percussion is retained.
+Hand assignment is estimated and should be reviewed. Note timing, velocities,
+tempo changes and pedal controls are preserved.
+
 Beat tracking accepts MIDI input. The other modes accept audio input. Vocal
 pitch contour produces CSV and WAV files; the other modes produce MIDI and,
 in some cases, CSV files. Transcription runs locally and can take several

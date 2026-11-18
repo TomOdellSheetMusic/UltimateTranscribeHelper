@@ -24,6 +24,7 @@ LAZY_COMMANDS = {
     "patch-cnn": ("omnizart.cli.patch_cnn", "patch_cnn", "Trancribes vocal melody (frame-based) in the audio."),
     "transcribe": ("omnizart.cli.transcribe", "transcribe", "Transcribe a single audio."),
     "stems": ("omnizart.cli.stems", "stems", "Separate audio into six WAV stems."),
+    "hands": ("omnizart.cli.hands", "hands", "Split a piano MIDI into hand tracks."),
 }
 
 
@@ -33,7 +34,7 @@ SUB_COMMAND_GROUP = [
             "music", "chord", "drum", "vocal", "vocal-contour", "beat", "patch-cnn", "transcribe"
         ]
     },
-    {"Utilities": ["stems", "download-checkpoints", "download-dataset", "synth"]}
+    {"Utilities": ["stems", "hands", "download-checkpoints", "download-dataset", "synth"]}
 ]
 
 

@@ -11,6 +11,36 @@ from omnizart.desktop.app import Application
 
 
 class RepeatedRunsTests(unittest.TestCase):
+    def test_hands_option_and_existing_midi_mode(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio, midi = folder / 'song.wav', folder / 'song.mid'
+            audio.touch()
+            midi.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread:
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.destination.set(str(folder))
+                    app.source.set(str(audio))
+                    app.split_hands.set(True)
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertIn('--split-hands', command)
+                    app.output_lock.unlink()
+                    app.source.set(str(midi))
+                    app.mode.set('Split piano MIDI into hands')
+                    app.mode_changed()
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertIn('hands', command)
+                    self.assertNotIn('--split-hands', command)
+                    app.output_lock.unlink()
+                finally:
+                    root.destroy()
+
     def test_drop_and_pymss_gpu_commands(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)

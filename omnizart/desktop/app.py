@@ -21,6 +21,7 @@ MODES = {
     "Vocal notes": ("vocal", "Audio", "MIDI + CSV"),
     "Vocal pitch contour": ("vocal-contour", "Audio", "CSV + WAV"),
     "Beats from MIDI": ("beat", "MIDI", "MIDI + CSV"),
+    "Split piano MIDI into hands": ("hands", "MIDI", "MIDI (left and right hands)"),
     "Separate stems (audio)": ("stems", "Audio", "WAV stems"),
 }
 
@@ -33,7 +34,7 @@ FIELD = "#252d40"
 CUSTOM_MODEL = "Imported Omnizart model"
 RESULT_SUFFIXES = (".mid", ".midi", ".csv", "_beat.csv", "_down_beat.csv", "_f0.csv",
                    "_trans.wav", "_accompaniment.wav", "_smoothed.mid", "_yourmt3_multitrack.mid", "_muscriptor_multitrack.mid", "_model_multitrack.mid", "_review.txt", "_comparison.txt", ".musicxml", "_simplified.musicxml", "_drums.wav",
-                   "_bass.wav", "_other.wav", "_vocals.wav", "_guitar.wav", "_piano.wav", ".pdf")
+                   "_bass.wav", "_other.wav", "_vocals.wav", "_guitar.wav", "_piano.wav", "_hands.mid", ".pdf")
 
 SETTING_HELP = {
     "onset": "Controls how strong a note's start must be. Lower values may detect quieter notes, "
@@ -285,6 +286,7 @@ class Application(ttk.Frame):
         self.score_meter = tk.StringVar(value="Auto")
         self.simplify_score = tk.BooleanVar(value=False)
         self.neural_staff = tk.BooleanVar(value=False)
+        self.split_hands = tk.BooleanVar(value=False)
         self.musescore_export = tk.BooleanVar(value=False)
         self.pdf_export = tk.BooleanVar(value=False)
         self.musescore_path = tk.StringVar()
@@ -482,6 +484,9 @@ class Application(ttk.Frame):
         self.lint_option = ttk.Checkbutton(card, text="Create note review report", variable=self.lint_notes, style="App.TCheckbutton")
         self.lint_option.grid(row=16, column=0, sticky="w", pady=(10, 0))
         Tooltip(self.lint_option, "Writes a separate text report of possible short or overlapping notes. Suggestions can be intentional; MIDI is unchanged.")
+        self.split_hands_option = ttk.Checkbutton(card, text='Save MIDI with left and right hand tracks', variable=self.split_hands, style='App.TCheckbutton')
+        self.split_hands_option.grid(row=27, column=0, columnspan=2, sticky='w', pady=(10, 0))
+        Tooltip(self.split_hands_option, 'Creates an additional MIDI for piano learning apps. The original MIDI is preserved. Requires one pitched piano track; hand assignments are estimates.')
 
         card = score_card
         self.score_option = ttk.Checkbutton(card, text="Create formatted MusicXML score", variable=self.musescore_export, style="App.TCheckbutton")
@@ -768,6 +773,7 @@ class Application(ttk.Frame):
             self.score_button.configure(state="normal")
             self.pdf_option.configure(state="normal")
             self.lint_option.configure(state="normal")
+            self.split_hands_option.configure(state="normal")
             self.smooth_option.configure(state="normal")
             self.short_option.configure(state="normal")
             self.update_smoothing_controls()
@@ -846,6 +852,7 @@ class Application(ttk.Frame):
             self.score_button.configure(state="disabled")
             self.pdf_option.configure(state="disabled")
             self.lint_option.configure(state="disabled")
+            self.split_hands_option.configure(state="disabled")
             self.smooth_option.configure(state="disabled")
             self.smooth_entry.configure(state="disabled")
             self.short_option.configure(state="disabled")
@@ -858,6 +865,8 @@ class Application(ttk.Frame):
             if mode == "stems":
                 self.description.set("Choose a separation model and save all or selected audio stems as WAV files.")
                 self.update_separation_controls()
+            elif mode == 'hands':
+                self.description.set('Choose a piano MIDI to create separate left- and right-hand tracks. The source remains unchanged.')
 
     def toggle_advanced(self):
         self.advanced_open = not self.advanced_open
@@ -971,7 +980,7 @@ class Application(ttk.Frame):
             self.status.set(f"Added {source.name} to the queue.")
 
     def browse_queue_files(self):
-        midi = MODES[self.mode.get()][0] == 'beat'
+        midi = MODES[self.mode.get()][0] in ('beat', 'hands')
         kinds = [('MIDI files', '*.mid *.midi'), ('All files', '*.*')] if midi else [
             ('Audio files', '*.wav *.flac *.mp3 *.ogg *.aiff *.aif'), ('All files', '*.*')]
         paths = filedialog.askopenfilenames(filetypes=kinds, initialdir=self.input_folder or None)
@@ -1073,7 +1082,7 @@ class Application(ttk.Frame):
                 self.jobs.remove(job)
 
     def browse_input(self):
-        midi = MODES[self.mode.get()][0] == "beat"
+        midi = MODES[self.mode.get()][0] in ("beat", "hands")
         kinds = [("MIDI files", "*.mid *.midi"), ("All files", "*.*")] if midi else [
             ("Audio files", "*.wav *.flac *.mp3 *.ogg *.aiff *.aif"), ("All files", "*.*")]
         current = Path(self.source.get()).expanduser() if self.source.get().strip() else None
@@ -1553,8 +1562,8 @@ class Application(ttk.Frame):
         self.input_folder = str(source.parent.resolve())
         self.save_folders(input_folder=self.input_folder, output_folder=str(destination.resolve()))
         mode = MODES[self.mode.get()][0]
-        if mode == "beat" and source.suffix.lower() not in (".mid", ".midi"):
-            messagebox.showerror("Input file", "Beat tracking requires a MIDI file.")
+        if mode in ("beat", "hands") and source.suffix.lower() not in (".mid", ".midi"):
+            messagebox.showerror("Input file", "This task requires a MIDI file.")
             return
         selected_model = self.music_model.get()
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)
@@ -1757,6 +1766,8 @@ class Application(ttk.Frame):
         if mode == "music":
             model = imported_path if imported_path is not None else self.music_model.get()
             cmd.extend(["--model-path", model, *options])
+            if self.split_hands.get():
+                cmd.append('--split-hands')
             if self.piano_only.get():
                 selected_stem = self.stem_choice.get().strip().lower()
                 if selected_stem == 'piano':
