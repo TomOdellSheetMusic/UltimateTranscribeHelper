@@ -92,6 +92,9 @@ now detects some clearly supported eighth- and quarter-note triplet patterns
 in quarter-note meters while retaining straight sixteenths elsewhere. Its
 conservative beat-level heuristic does not cover all tuplets or compound meters,
 and alignment and expressive timing can still make its interpretation wrong.
+When a beat has clear evidence of both straight subdivisions and triplets, the
+exporter conservatively retains the straight grid; simultaneous polyrhythms
+therefore still need manual correction.
 This evaluation does not establish that generated scores are readable.
 
 An automated example reproduces the three quarter-note triplet chords in

@@ -11,6 +11,7 @@ def triplet_beats(onsets):
     """
     evidence = defaultdict(set)
     boundaries = set()
+    straight = set()
     for position in onsets:
         if not math.isfinite(position) or position < 0:
             continue
@@ -20,14 +21,17 @@ def triplet_beats(onsets):
             boundaries.add(beat)
         elif phase >= .93:
             boundaries.add(beat + 1)
+        if any(abs(phase - part) <= .03 for part in (.25, .5, .75)):
+            straight.add(beat)
         for third in (1, 2):
             if abs(phase - third / 3) <= .055 and abs(phase - round(phase * 4) / 4) >= .045:
                 evidence[beat].add(third)
     selected = set()
     for beat, thirds in evidence.items():
-        if beat in boundaries and thirds == {1, 2}:
+        if beat in boundaries and beat not in straight and thirds == {1, 2}:
             selected.add(beat)
-        if beat in boundaries and 2 in thirds and 1 in evidence.get(beat + 1, set()):
+        if (beat in boundaries and beat not in straight and beat + 1 not in straight and
+                2 in thirds and 1 in evidence.get(beat + 1, set())):
             selected.update((beat, beat + 1))
     return selected
 

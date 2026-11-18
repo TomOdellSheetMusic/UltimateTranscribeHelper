@@ -23,6 +23,8 @@ class AdaptiveRhythmTests(unittest.TestCase):
     def test_evidence_requires_multiple_distinct_third_positions(self):
         self.assertEqual(triplet_beats([0, .25, .5, .75, 1]), set())
         self.assertEqual(triplet_beats([0, .333, 1, 1.5]), set())
+        # Avoid moving a simultaneous straight-eighth line to a triplet grid.
+        self.assertEqual(triplet_beats([0, 1/3, 1/2, 2/3]), set())
         # These measured Best of Friends onsets are expressive straight time,
         # not a quarter-note triplet despite two third-like positions.
         self.assertEqual(triplet_beats([28.016, 28.312, 28.947, 29.401, 29.43, 29.479, 29.64, 29.957]), set())
