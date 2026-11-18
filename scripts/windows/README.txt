@@ -21,7 +21,8 @@ hand tracks" under MIDI cleanup. Hand assignments are estimates.
 To process an existing file, choose "Split piano MIDI into hands" as the task.
 This standalone mode can also use neural hand assignment; it preserves the
 input timing, velocities, tempo changes and pedal controls. It requires one
-pitched piano track/channel; percussion is retained. Since this mode has no
+identifiable piano part; other instruments and percussion are retained when
+using neural assignment. Since this mode has no
 audio, it uses the input MIDI's timing instead of detecting audio beats.
 
 Beat tracking accepts MIDI input. The other modes accept audio input. Vocal

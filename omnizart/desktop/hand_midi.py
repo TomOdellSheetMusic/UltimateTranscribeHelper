@@ -9,8 +9,8 @@ import mido
 def split_piano_midi(source, destination, analysis=None):
     """Write right and left hand tracks, retaining original note timing and metadata.
 
-    Hand assignment is an estimate. Only one pitched MIDI track/channel can be
-    interpreted as piano; percussion and all non-channel metadata are retained.
+    Hand assignment is an estimate. A unique piano part must be identifiable;
+    other instruments, percussion and non-channel metadata are retained.
     """
     from omnizart.desktop.notation import _assign_piano_hands
 
@@ -31,9 +31,18 @@ def split_piano_midi(source, destination, analysis=None):
             if message.type == 'note_on' and message.velocity and message.channel != 9:
                 pitched_parts.add((track_index, message.channel))
         events.append(track_events)
-    if len(pitched_parts) != 1:
-        raise ValueError('Hand splitting requires exactly one pitched piano track/channel. Other instruments cannot be assigned safely.')
-    piano_track, piano_channel = next(iter(pitched_parts))
+    piano_key = analysis.get('piano_key') if analysis is not None else None
+    if piano_key is None and len(pitched_parts) == 1:
+        piano_key = next(iter(pitched_parts))
+    if piano_key not in pitched_parts:
+        raise ValueError('Hand splitting requires exactly one identifiable pitched piano track/channel.')
+    piano_track, piano_channel = piano_key
+    used_channels = {message.channel for track_index, track in enumerate(events) for _, _, message in track
+                     if hasattr(message, 'channel') and (track_index, message.channel) != piano_key}
+    free_channels = [channel for channel in range(16) if channel != 9 and channel not in used_channels]
+    if len(free_channels) < 2:
+        raise ValueError('There are not enough unused MIDI channels to separate the piano hands.')
+    channels = {1: free_channels[0], 2: free_channels[1]}
     pending = defaultdict(deque)
     notes = []
     for tick, index, message in events[piano_track]:
@@ -90,6 +99,32 @@ def split_piano_midi(source, destination, analysis=None):
     output = mido.MidiFile(type=1, ticks_per_beat=midi.ticks_per_beat)
     hand_events = {1: [], 2: []}
     hand_positions = {1: [], 2: []}
+    other_overrides = {}
+    other_omitted = set()
+    if analysis is not None and analysis.get('quantize'):
+        for key, positions in analysis.get('other_positions', {}).items():
+            track_index, channel = key
+            active = defaultdict(deque)
+            completed = []
+            for _, index, message in events[track_index]:
+                if getattr(message, 'channel', None) != channel:
+                    continue
+                if message.type == 'note_on' and message.velocity:
+                    active[message.note].append(index)
+                elif message.type == 'note_off' or (message.type == 'note_on' and not message.velocity):
+                    if not active[message.note]:
+                        raise ValueError('An instrument has a note-off without a matching note-on.')
+                    completed.append((active[message.note].popleft(), index))
+            if len(completed) != len(positions) or any(active.values()):
+                raise ValueError('Score timing does not match an instrument MIDI track.')
+            for (on_index, off_index), position in zip(completed, positions):
+                if position is None:
+                    other_omitted.update(((track_index, on_index), (track_index, off_index)))
+                    continue
+                start, end = position
+                other_overrides[(track_index, on_index)] = round(start * midi.ticks_per_beat)
+                other_overrides[(track_index, off_index)] = round(end * midi.ticks_per_beat)
+    output_overrides = {}
     for track_index, track in enumerate(events):
         original = []
         for tick, index, message in track:
@@ -98,13 +133,17 @@ def split_piano_midi(source, destination, analysis=None):
                     if index not in note_hands:
                         continue
                     staff = note_hands[index]
-                    hand_events[staff].append((tick, message.copy(channel=staff - 1)))
+                    hand_events[staff].append((tick, message.copy(channel=channels[staff])))
                     hand_positions[staff].append(note_positions.get(index))
                 else:
                     for staff in (1, 2):
-                        hand_events[staff].append((tick, message.copy(channel=staff - 1)))
+                        hand_events[staff].append((tick, message.copy(channel=channels[staff])))
                         hand_positions[staff].append(None)
             else:
+                if (track_index, index) in other_omitted:
+                    continue
+                if (track_index, index) in other_overrides:
+                    output_overrides[(track_index, len(original))] = other_overrides[(track_index, index)]
                 original.append((tick, message))
         output.tracks.append(_make_track(original))
     for staff, name in ((1, 'Right hand'), (2, 'Left hand')):
@@ -112,6 +151,7 @@ def split_piano_midi(source, destination, analysis=None):
     if analysis is not None and analysis.get('grid') is not None:
         overrides = {(len(midi.tracks) + staff - 1, index + 1): position
                      for staff in (1, 2) for index, position in enumerate(hand_positions[staff]) if position is not None}
+        overrides.update(output_overrides)
         output = _align_midi(output, analysis['grid'], analysis['meter'], overrides, analysis.get('key'))
     elif analysis is not None and (analysis.get('key') or analysis.get('apply_meter')):
         output = _update_metadata(output, analysis.get('key'), analysis['meter'] if analysis.get('apply_meter') else None)

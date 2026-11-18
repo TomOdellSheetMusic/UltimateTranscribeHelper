@@ -71,7 +71,7 @@ class HandMidiTests(unittest.TestCase):
             midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=90, channel=1),
                                                mido.Message('note_off', note=60, channel=1, time=20)]))
             midi.save(source)
-            with self.assertRaisesRegex(ValueError, 'exactly one pitched'):
+            with self.assertRaisesRegex(ValueError, 'exactly one identifiable'):
                 split_piano_midi(source, target)
             self.assertFalse(target.exists())
 
@@ -174,6 +174,32 @@ class HandMidiTests(unittest.TestCase):
             self.assertLess(len(midi_pitches), 12)
             self.assertEqual(len(midi_pitches), len(xml_notes))
             self.assertEqual(len([msg for msg in mido.MidiFile(source).tracks[0] if msg.type == 'note_on' and msg.velocity]), 12)
+
+    def test_neural_hand_output_preserves_and_aligns_vocal_track(self):
+        with TemporaryDirectory() as folder:
+            source, target, score = (Path(folder) / name for name in ('input.mid', 'hands.mid', 'score.musicxml'))
+            fixture(source)
+            midi = mido.MidiFile(source)
+            vocal = mido.MidiTrack([mido.MetaMessage('track_name', name='Vocals'),
+                                    mido.Message('program_change', channel=0, program=54),
+                                    mido.Message('note_on', channel=0, note=65, velocity=75, time=18),
+                                    mido.Message('note_off', channel=0, note=65, time=240)])
+            midi.tracks.append(vocal)
+            midi.save(source)
+            analysis = {}
+            with patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]):
+                export_score(source, score, tempo=120, neural_staff=True, analysis_out=analysis)
+            analysis['grid'] = BeatGrid([0, .5, 1, 1.5], [0], tempo=120, downbeat=0)
+            analysis['quantize'] = True
+            split_piano_midi(source, target, analysis)
+            result = mido.MidiFile(target)
+            vocal_out = next(track for track in result.tracks if track.name == 'Vocals')
+            self.assertEqual([msg.note for msg in vocal_out if msg.type == 'note_on' and msg.velocity], [65])
+            self.assertTrue(all(tick % 120 == 0 for tick, msg in absolute(vocal_out) if msg.type in ('note_on', 'note_off')))
+            vocal_channel = next(msg.channel for msg in vocal_out if msg.type == 'note_on')
+            hand_channels = {msg.channel for track in result.tracks[-2:] for msg in track if msg.type == 'note_on' and msg.velocity}
+            self.assertEqual(len(hand_channels), 2)
+            self.assertNotIn(vocal_channel, hand_channels)
 
 
 if __name__ == '__main__':

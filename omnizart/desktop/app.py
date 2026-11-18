@@ -539,7 +539,7 @@ class Application(ttk.Frame):
         Tooltip(self.lint_option, "Writes a separate text report of possible short or overlapping notes. Suggestions can be intentional; MIDI is unchanged.")
         self.split_hands_option = ttk.Checkbutton(card, text='Save MIDI with left and right hand tracks', variable=self.split_hands, style='App.TCheckbutton')
         self.split_hands_option.grid(row=27, column=0, columnspan=2, sticky='w', pady=(10, 0))
-        Tooltip(self.split_hands_option, 'Creates an additional MIDI for piano learning apps. The original MIDI is preserved. Requires one pitched piano track; hand assignments are estimates.')
+        Tooltip(self.split_hands_option, 'Creates an additional MIDI for piano learning apps. The original MIDI is preserved. Requires one identifiable piano part; hand assignments are estimates.')
 
         card = score_card
         self.score_option = ttk.Checkbutton(card, text="Create formatted MusicXML score", variable=self.musescore_export, style="App.TCheckbutton")
