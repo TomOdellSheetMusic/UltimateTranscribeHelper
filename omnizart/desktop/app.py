@@ -378,12 +378,12 @@ class Application(ttk.Frame):
         self.keep_option.grid(row=8, column=1, sticky="w", padx=(14, 0), pady=(16, 0))
         Tooltip(self.separation_option, "Uses the included CPU model to separate vocals. It can help with piano and voice, "
                 "but can also remove some instruments or introduce artifacts. Compare both results.")
-        self.piano_only_option = ttk.Checkbutton(card, text="Isolate piano before transcribing (six-stem model)",
+        self.piano_only_option = ttk.Checkbutton(card, text="Isolate piano before transcribing",
                                                 variable=self.piano_only, style="App.TCheckbutton",
                                                 command=self.update_separation_controls)
         self.piano_only_option.grid(row=9, column=0, sticky="w", pady=(4, 0))
-        Tooltip(self.piano_only_option, "Runs the optional six-stem HT-Demucs model, then transcribes only its piano stem. "
-                "Download it in Models & import. Separation can introduce artifacts.")
+        Tooltip(self.piano_only_option, "Runs the selected separation model, then transcribes its piano stem. "
+                "Select a six-stem or pymss model below. Separation can introduce artifacts.")
         self.input_piano_option = ttk.Checkbutton(card, text="Input is already piano only",
                                                   variable=self.input_is_piano, style="App.TCheckbutton")
         self.input_piano_option.grid(row=9, column=1, sticky="w", padx=(14, 0), pady=(4, 0))
