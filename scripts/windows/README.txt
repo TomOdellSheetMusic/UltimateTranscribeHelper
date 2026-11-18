@@ -85,6 +85,25 @@ Choose Models & import to download or import the model first. GPU is optional;
 the separated piano can be imperfect. Open a resulting WAV as input to
 transcribe that stem. This mode does not automatically create MIDI files.
 
+For an audio file that is already isolated piano, select "Input is already
+piano only". This does not run separation. It also permits neural piano hand
+assignment with YourMT3 or MuScriptor. When a model predicts multiple instrument
+tracks from that input, the app saves its original multitrack MIDI and creates
+a separate single-piano MIDI for the score; predicted notes may still be wrong.
+
+The standalone stem mode and piano-isolation option can also use pymss. Choose
+"pymss model" and "Browse pymss models" to install its optional CPU runtime,
+search its catalog, download a model, or register local weights and a matching
+configuration with the correct architecture. Catalog models may download on
+first use. The catalog window lets you choose Hugging Face, ModelScope or the
+HF mirror as the download source. A piano-isolation model must actually produce a stem named piano.
+In stem mode, select a stem to save, type another pymss stem name, or choose
+All. Separation backends can still calculate stems that are not saved. The
+separate custom six-stem ONNX option supports only models compatible with the
+built-in HT-Demucs mix/stems interface and output order, not arbitrary ONNX.
+pymss runs on CPU in its isolated runtime; the existing DirectML option applies
+to the built-in six-stem and UVR models, not pymss.
+
 For the project licence see LICENSE. Third-party components retain their own
 licences and notices in the runtime and model directories.
 See MODEL-LICENSES.md for the model inventory and unresolved redistribution
