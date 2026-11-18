@@ -70,7 +70,7 @@ def separate(source, output_base, model, selected_stems=None, source_name='huggi
     if device == 'cuda':
         _command(runtime=runtime)  # Check installation before probing.
         probe = subprocess.run([str(python_path(runtime)), '-c',
-            "import sys, torch; i=int(sys.argv[1]); assert torch.cuda.is_available(), 'CUDA is unavailable; check the NVIDIA driver'; assert i < torch.cuda.device_count(), 'GPU index is unavailable'; torch.cuda.init(); print(torch.cuda.get_device_name(i))", str(gpu_index)],
+            "import sys, torch; i=int(sys.argv[1]); assert torch.cuda.is_available(), 'CUDA is unavailable; check the NVIDIA driver'; assert i < torch.cuda.device_count(), 'GPU index is unavailable'; torch.ones(1, device=f'cuda:{i}').add_(1); torch.cuda.synchronize(i); print(torch.cuda.get_device_name(i))", str(gpu_index)],
             env=_environment(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             encoding='utf-8', errors='replace', timeout=60, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if probe.returncode:
