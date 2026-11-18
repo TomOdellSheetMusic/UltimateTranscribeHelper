@@ -4,7 +4,32 @@ from tempfile import TemporaryDirectory
 import unittest
 from xml.etree import ElementTree as ET
 import mido
-from omnizart.desktop.notation import export_score, _estimate_tempo, _piano_voices, _assign_piano_hands, _simplify_piano_hands
+from omnizart.desktop.notation import export_score, _estimate_tempo, _piano_voices, _assign_piano_hands, _simplify_piano_hands, _pitch
+
+
+class TestKeyAwarePitchSpelling(unittest.TestCase):
+    def test_diatonic_enharmonics_and_octaves(self):
+        from xml.etree import ElementTree as ET
+        for midi, fifths, expected in ((65, 6, ('E', '1', '4')),
+                                       (60, 7, ('B', '1', '3')),
+                                       (59, -7, ('C', '-1', '4')),
+                                       (64, -7, ('F', '-1', '4'))):
+            with self.subTest(midi=midi, fifths=fifths):
+                note = ET.Element('note')
+                _pitch(note, midi, fifths)
+                self.assertEqual(tuple(note.findtext('pitch/' + name) for name in ('step', 'alter', 'octave')), expected)
+
+    def test_every_key_and_midi_pitch_preserves_sounding_pitch(self):
+        from xml.etree import ElementTree as ET
+        natural = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+        for fifths in range(-7, 8):
+            for midi in range(128):
+                note = ET.Element('note')
+                _pitch(note, midi, fifths)
+                step = note.findtext('pitch/step')
+                alter = int(note.findtext('pitch/alter', '0'))
+                octave = int(note.findtext('pitch/octave'))
+                self.assertEqual((octave + 1) * 12 + natural[step] + alter, midi)
 
 
 class NativeScoreTests(unittest.TestCase):

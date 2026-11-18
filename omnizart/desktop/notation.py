@@ -319,22 +319,28 @@ def _duration_pieces(start, end, measure_length):
                 break
 
 
-def _pitch(note, pitch, flats=False):
-    # Choose common flats in flat keys; unusual enharmonics still need review.
+def _pitch(note, pitch, fifths=0):
+    # Spell diatonic notes according to the key signature, including E#, B#,
+    # Cb and Fb. Chromatic notes still use a simple sharp/flat preference.
     names = [('C', 0), ('C', 1), ('D', 0), ('D', 1), ('E', 0), ('F', 0),
              ('F', 1), ('G', 0), ('G', 1), ('A', 0), ('A', 1), ('B', 0)]
-    if flats:
+    if fifths < 0:
         for index, step in ((1, 'D'), (3, 'E'), (6, 'G'), (8, 'A'), (10, 'B')):
             names[index] = (step, -1)
+    natural = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+    altered = ('FCGDAEB'[:fifths] if fifths > 0 else 'BEADGCF'[:-fifths])
+    for step, value in natural.items():
+        alteration = (1 if fifths > 0 else -1) if step in altered else 0
+        names[(value + alteration) % 12] = (step, alteration)
     step, alter = names[pitch % 12]
     p = _element(note, 'pitch')
     _element(p, 'step', step)
     if alter:
         _element(p, 'alter', alter)
-    _element(p, 'octave', pitch // 12 - 1)
+    _element(p, 'octave', (pitch - natural[step] - alter) // 12 - 1)
 
 
-def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_before, tied_after, flats=False):
+def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_before, tied_after, fifths=0):
     for index, pitch_info in enumerate(pitches):
         pitch, velocity = pitch_info[:2]
         note_tied_before = tied_before or (len(pitch_info) > 2 and pitch_info[2])
@@ -342,7 +348,7 @@ def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_b
         note = _element(measure, 'note', dynamics=str(round(velocity * 100 / 90, 2)))
         if index:
             _element(note, 'chord')
-        _pitch(note, pitch, flats)
+        _pitch(note, pitch, fifths)
         _element(note, 'duration', end - start)
         if note_tied_before:
             _element(note, 'tie', type='stop')
@@ -536,7 +542,7 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                                      staff if is_piano else None)
                     for a, b, kind, dotted in _duration_pieces(segment_start, segment_end, length):
                         _write_note(measure, pitches, voice, staff if is_piano else None, a, b, kind, dotted,
-                                    a > start, b < end, fifths < 0)
+                                    a > start, b < end, fifths)
                     cursor = segment_end
                 if cursor < right:
                     _write_rests(measure, cursor, right, length, voice,
