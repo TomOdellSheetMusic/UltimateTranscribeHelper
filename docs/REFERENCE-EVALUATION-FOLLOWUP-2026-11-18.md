@@ -92,6 +92,34 @@ rhythm spelling and tuplets remain unsupported by the exporter's fixed
 sixteenth grid. This evaluation does not establish that generated scores are
 readable, and does not address that limitation.
 
+## DuET score experiment
+
+[DuET](https://github.com/wei-zeng98/DuET) revision
+`d68c7f219aa5f459673aa4b64f1d491c13d7eee4` and model
+`duet-epoch83-v1` were run on CPU on the same 30-second Transkun MIDI from
+Best of Friends. The model retained all 182 input note predictions. Its
+readable MusicXML reported a 66 BPM quarter-note tempo and eight 4/4 measures;
+the human reference marks 135 BPM. Omnizart with a manually specified 132.09
+BPM and 1.04 s downbeat produced 17 measures, including an empty first bar.
+Both outputs need review: DuET chose approximately half the reference beat
+rate, and Omnizart extrapolated a whole opening bar before the first downbeat.
+This is one short excerpt, not evidence about DuET on other music.
+
+DuET's score contained 248 pitched note elements, 67 tie starts, seven rests
+and two clefs; Omnizart's contained 222 pitched note elements, 40 tie starts,
+193 rests and two clefs. These counts are affected by different meter, bar
+placement and voice encoding; they do not establish which output is more
+readable or accurate. DuET also reported one duplicate removed and one overlap
+shortened in its listening MIDI. Its model weights are separately licensed under
+CC BY-NC 4.0, and the experiment was local; it is not bundled in Omnizart.
+
+The exporter now marks an extrapolated opening measure as a partial measure,
+starting at recording time zero instead of inserting the part of the bar that
+precedes the recording. A regression test checks the shorter MusicXML duration,
+downbeat position and preservation of the input MIDI. Pickup-note handling is
+also covered by the existing beat-grid tests. A MuseScore playback round trip of
+this new case has not yet been verified.
+
 ## Reproduction
 
 Run with the project runtime, supplying local paths to the score, recording and
