@@ -76,7 +76,9 @@ class ScoreButtonTests(unittest.TestCase):
             messages.put(('done', (0, folder)))
             app = SimpleNamespace(messages=messages, score_warnings=[], log=Mock(), output_lock=None,
                                   progress=Mock(), start_button=Mock(), open_button=Mock(), output_folder=folder,
-                                  active_mode='music', output_base=base, status=Mock(), after=Mock(), poll=Mock())
+                                  active_mode='music', output_base=base, status=Mock(), after=Mock(), poll=Mock(),
+                                  active_job=None, queue_view=Mock(selection=Mock(return_value=())),
+                                  after_idle=Mock(), _start_next_job=Mock())
             with patch('omnizart.desktop.app.midi_note_count', return_value=3), patch('omnizart.desktop.app.messagebox.showwarning') as warning:
                 Application.poll(app)
             self.assertIn('omitted 2 note', warning.call_args.args[1])
@@ -91,7 +93,9 @@ class ScoreButtonTests(unittest.TestCase):
             messages.put(('done', (0, folder)))
             app = SimpleNamespace(messages=messages, score_warnings=[], log=Mock(), output_lock=None,
                                   progress=Mock(), start_button=Mock(), open_button=Mock(), output_folder=folder,
-                                  active_mode='music', output_base=base, status=Mock(), after=Mock(), poll=Mock())
+                                  active_mode='music', output_base=base, status=Mock(), after=Mock(), poll=Mock(),
+                                  active_job=None, queue_view=Mock(selection=Mock(return_value=())),
+                                  after_idle=Mock(), _start_next_job=Mock())
             with patch('omnizart.desktop.app.midi_note_count', return_value=3), patch('omnizart.desktop.app.messagebox.showwarning') as warning:
                 Application.poll(app)
             self.assertIn('shortened 2 held', warning.call_args.args[1])
