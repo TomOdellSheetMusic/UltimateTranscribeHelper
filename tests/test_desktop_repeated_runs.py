@@ -10,6 +10,42 @@ from omnizart.desktop.app import Application
 
 
 class RepeatedRunsTests(unittest.TestCase):
+    def test_pymss_selected_for_piano_isolation_and_stem_output(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.stem_model.set('pymss model')
+                    app.pymss_model.set('test-piano')
+                    app.piano_only.set(True)
+                    app.update_separation_controls()
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertIn('--piano-only', command)
+                    self.assertEqual(command[command.index('--piano-separator') + 1], 'pymss')
+                    self.assertEqual(command[command.index('--pymss-model') + 1], 'test-piano')
+                    app.output_lock.unlink()
+                    app.mode.set('Separate stems (audio)')
+                    app.mode_changed()
+                    app.stem_choice.set('Piano')
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertEqual(command[command.index('--backend') + 1], 'pymss')
+                    self.assertEqual(command[command.index('--stem') + 1], 'piano')
+                    self.assertEqual(app.active_stems, ('piano',))
+                    app.output_lock.unlink()
+                finally:
+                    root.destroy()
+
     def test_multiple_custom_models_can_be_selected(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)

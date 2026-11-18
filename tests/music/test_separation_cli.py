@@ -9,6 +9,72 @@ from omnizart.cli.music.transcribe import transcribe
 
 
 class SeparationCliTests(unittest.TestCase):
+    def test_pymss_piano_isolation_feeds_selected_stem_to_transcription(self):
+        import mido
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            observed = []
+            def isolate(source, base, model, selected_stems, source_name):
+                observed.append((source, model, selected_stems))
+                Path(str(base) + '_piano.wav').touch()
+            def transcribe_piano(source, model, output, *args):
+                self.assertTrue(Path(source).name.endswith('_piano.wav'))
+                midi = mido.MidiFile()
+                midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                                   mido.Message('note_off', note=60, time=480)]))
+                midi.save(output)
+            with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                 patch('omnizart.desktop.six_stems.separate') as six, \
+                 patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_piano):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano', '--output', str(root),
+                    '--piano-only', '--piano-separator', 'pymss', '--pymss-model', 'my-piano', '--score'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(observed, [(str(audio), 'my-piano', ['piano'])])
+            six.assert_not_called()
+            self.assertTrue((root / 'song.mid').is_file())
+            self.assertTrue((root / 'song.musicxml').is_file())
+
+    def test_already_isolated_piano_multitrack_models_need_no_separator(self):
+        import pretty_midi
+        from xml.etree import ElementTree as ET
+        for model in ('YourMT3', 'MuScriptor'):
+            with self.subTest(model=model), TemporaryDirectory() as directory:
+                root = Path(directory)
+                audio = root / 'piano.wav'
+                audio.touch()
+                def make_output(_audio, _model, output, *args):
+                    midi = pretty_midi.PrettyMIDI()
+                    for program, pitch in ((0, 48), (40, 72)):
+                        instrument = pretty_midi.Instrument(program=program)
+                        instrument.notes.append(pretty_midi.Note(velocity=80, pitch=pitch, start=0, end=1))
+                        midi.instruments.append(instrument)
+                    midi.write(str(output))
+                with patch('omnizart.desktop.six_stems.separate') as separator, \
+                     patch('omnizart.cli.music.transcribe._transcribe', side_effect=make_output), \
+                     patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]):
+                    result = CliRunner().invoke(transcribe, [str(audio), '--model-path', model,
+                        '--input-is-piano', '--output', str(root), '--score', '--neural-staff'])
+                self.assertEqual(result.exit_code, 0, result.output)
+                separator.assert_not_called()
+                original = pretty_midi.PrettyMIDI(str(root / ('piano_' + model.lower() + '_multitrack.mid')))
+                piano = pretty_midi.PrettyMIDI(str(root / 'piano.mid'))
+                self.assertEqual(len(original.instruments), 2)
+                self.assertEqual(len(piano.instruments), 1)
+                self.assertEqual(sorted(n.pitch for n in piano.instruments[0].notes), [48, 72])
+                score = ET.parse(root / 'piano.musicxml')
+                self.assertEqual(score.findtext('.//staves'), '2')
+                self.assertEqual(len(score.findall('.//note/pitch')), 2)
+
+    def test_already_piano_rejects_separation(self):
+        with TemporaryDirectory() as directory:
+            audio = Path(directory) / 'song.wav'
+            audio.touch()
+            result = CliRunner().invoke(transcribe, [str(audio), '--input-is-piano', '--piano-only', '--output', directory])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn('cannot be combined', result.output)
+
     def test_piano_only_yourmt3_preserves_multitrack_and_writes_one_piano(self):
         import pretty_midi
         with TemporaryDirectory() as directory:

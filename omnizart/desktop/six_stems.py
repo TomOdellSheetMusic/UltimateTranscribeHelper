@@ -55,7 +55,7 @@ def install_model(source=None):
         temporary.unlink(missing_ok=True)
 
 
-def separate(source, output_base, device="cpu", gpu_index=0):
+def separate(source, output_base, device="cpu", gpu_index=0, selected_stems=None, custom_model=None):
     """Write six WAV stems to distinct files beside output_base.
 
     The model runs in overlapping windows. The source is resampled to 44.1 kHz;
@@ -66,11 +66,17 @@ def separate(source, output_base, device="cpu", gpu_index=0):
     import onnxruntime as ort
     import soundfile as sf
 
-    checkpoint = model_path()
-    if not verify_model(checkpoint):
+    selected = tuple(STEMS if selected_stems is None else selected_stems)
+    if not selected or len(set(selected)) != len(selected) or any(stem not in STEMS for stem in selected):
+        raise ValueError("Choose at least one valid six-stem output without duplicates.")
+    checkpoint = Path(custom_model) if custom_model else model_path()
+    if custom_model:
+        if not checkpoint.is_file() or checkpoint.suffix.lower() != '.onnx':
+            raise FileNotFoundError('Select an existing compatible six-stem ONNX model.')
+    elif not verify_model(checkpoint):
         raise FileNotFoundError("Six-stem model missing or invalid. Open Models & import to download or import it.")
     output_base = Path(output_base)
-    targets = [output_base.with_name(output_base.name + "_" + stem + ".wav") for stem in STEMS]
+    targets = [output_base.with_name(output_base.name + "_" + stem + ".wav") for stem in selected]
     if any(path.exists() for path in targets):
         raise FileExistsError("A stem output already exists; choose a new output name.")
     try:
@@ -99,7 +105,10 @@ def separate(source, output_base, device="cpu", gpu_index=0):
         providers = ["CPUExecutionProvider"]
     else:
         raise ValueError("Unknown separation device.")
-    session = ort.InferenceSession(str(checkpoint), sess_options=options, providers=providers)
+    try:
+        session = ort.InferenceSession(str(checkpoint), sess_options=options, providers=providers)
+    except Exception as exc:
+        raise RuntimeError(f'Could not load the selected six-stem ONNX model: {exc}') from exc
     if device == "directml":
         session.disable_fallback()
         if "DmlExecutionProvider" not in session.get_providers():
@@ -112,7 +121,7 @@ def separate(source, output_base, device="cpu", gpu_index=0):
     weights = np.zeros(SEGMENT_SAMPLES, dtype=np.float32)
     print(f"Separating six stems on {'DirectML GPU ' + str(gpu_index) if device == 'directml' else 'CPU'}...", flush=True)
     with tempfile.TemporaryDirectory(prefix="omnizart-stems-", dir=str(output_base.parent)) as temporary:
-        files = [Path(temporary) / (stem + ".wav") for stem in STEMS]
+        files = [Path(temporary) / (stem + ".wav") for stem in selected]
         with ExitStack() as stack:
             writers = [stack.enter_context(sf.SoundFile(str(path), mode="w", samplerate=SAMPLE_RATE,
                                                        channels=2, subtype="FLOAT")) for path in files]
@@ -121,7 +130,10 @@ def separate(source, output_base, device="cpu", gpu_index=0):
                 length = min(SEGMENT_SAMPLES, total - start)
                 chunk = np.zeros((1, 2, SEGMENT_SAMPLES), dtype=np.float32)
                 chunk[0, :, :length] = mixture[:, start:start + length]
-                prediction = session.run(["stems"], {"mix": chunk})[0]
+                try:
+                    prediction = session.run(["stems"], {"mix": chunk})[0]
+                except Exception as exc:
+                    raise RuntimeError(f'The model is not compatible with the six-stem ONNX interface: {exc}') from exc
                 if prediction.shape != (1, len(STEMS), 2, SEGMENT_SAMPLES) or not np.isfinite(prediction).all():
                     raise RuntimeError("Six-stem model returned invalid audio.")
                 window = np.ones(length, dtype=np.float32)
@@ -137,8 +149,8 @@ def separate(source, output_base, device="cpu", gpu_index=0):
                 if np.any(weights[:emitted] <= 0):
                     raise RuntimeError("Six-stem audio reconstruction has an uncovered section.")
                 block = accum[:, :, :emitted] / weights[None, None, :emitted]
-                for index, writer in enumerate(writers):
-                    writer.write(block[index].T)
+                for stem, writer in zip(selected, writers):
+                    writer.write(block[STEMS.index(stem)].T)
                 accum[:, :, :-stride] = accum[:, :, stride:].copy()
                 accum[:, :, -stride:] = 0
                 weights[:-stride] = weights[stride:].copy()
@@ -155,5 +167,5 @@ def separate(source, output_base, device="cpu", gpu_index=0):
             for path in published:
                 path.unlink(missing_ok=True)
             raise
-    print(f"Six stems saved beside {output_base}", flush=True)
+    print(f"Selected stems saved beside {output_base}", flush=True)
     return targets

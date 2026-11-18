@@ -32,7 +32,7 @@ ACCENT = "#a49aff"
 FIELD = "#252d40"
 CUSTOM_MODEL = "Imported Omnizart model"
 RESULT_SUFFIXES = (".mid", ".midi", ".csv", "_beat.csv", "_down_beat.csv", "_f0.csv",
-                   "_trans.wav", "_accompaniment.wav", "_smoothed.mid", "_yourmt3_multitrack.mid", "_review.txt", "_comparison.txt", ".musicxml", "_simplified.musicxml", "_drums.wav",
+                   "_trans.wav", "_accompaniment.wav", "_smoothed.mid", "_yourmt3_multitrack.mid", "_muscriptor_multitrack.mid", "_model_multitrack.mid", "_review.txt", "_comparison.txt", ".musicxml", "_simplified.musicxml", "_drums.wav",
                    "_bass.wav", "_other.wav", "_vocals.wav", "_guitar.wav", "_piano.wav", ".pdf")
 
 SETTING_HELP = {
@@ -117,7 +117,9 @@ def reserve_result_name(folder, source_stem):
         except FileExistsError:
             continue
         try:
-            if base.exists() or any((folder / (name + ending)).exists() for ending in RESULT_SUFFIXES):
+            if (base.exists() or any((folder / (name + ending)).exists() for ending in RESULT_SUFFIXES) or
+                    any(p.is_file() and p.name.casefold().startswith((name + '_').casefold()) and p.suffix.lower() == '.wav'
+                        for p in folder.iterdir())):
                 lock.unlink()
                 continue
             return base, lock
@@ -149,13 +151,13 @@ def read_folders():
         data = json.loads(folder_settings_path().read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return {}
-        return {key: value for key in ("input", "output", "musescore")
+        return {key: value for key in ("input", "output", "musescore", "custom_six_stem", "pymss_model", "pymss_source")
                 if isinstance((value := data.get(key)), str)}
     except (OSError, ValueError):
         return {}
 
 
-def remember_folders(input_folder=None, output_folder=None, musescore=None):
+def remember_folders(input_folder=None, output_folder=None, musescore=None, custom_six_stem=None, pymss_model=None, pymss_source=None):
     settings = folder_settings_path()
     folders = read_folders()
     if input_folder is not None:
@@ -164,6 +166,12 @@ def remember_folders(input_folder=None, output_folder=None, musescore=None):
         folders["output"] = str(output_folder)
     if musescore is not None:
         folders["musescore"] = str(musescore)
+    if custom_six_stem is not None:
+        folders["custom_six_stem"] = str(custom_six_stem)
+    if pymss_model is not None:
+        folders["pymss_model"] = str(pymss_model)
+    if pymss_source is not None:
+        folders["pymss_source"] = str(pymss_source)
     settings.parent.mkdir(parents=True, exist_ok=True)
     temporary = settings.with_suffix(".tmp")
     try:
@@ -256,8 +264,14 @@ class Application(ttk.Frame):
         self.custom_models = {imported_model_label(path): path for path in read_imported_models()}
         self.remove_vocals = tk.BooleanVar(value=False)
         self.piano_only = tk.BooleanVar(value=False)
+        self.input_is_piano = tk.BooleanVar(value=False)
         self.include_vocals = tk.BooleanVar(value=False)
         self.separator_model = tk.StringVar(value="UVR MDX (recommended)")
+        self.stem_model = tk.StringVar(value="Built-in six-stem")
+        self.stem_choice = tk.StringVar(value="All")
+        self.custom_stem_model = tk.StringVar()
+        self.pymss_model = tk.StringVar(value="")
+        self.pymss_source = tk.StringVar(value="huggingface")
         self.use_gpu = tk.BooleanVar(value=False)
         self.gpu_index = tk.StringVar(value="0")
         self.compare_enabled = tk.BooleanVar(value=False)
@@ -280,6 +294,12 @@ class Application(ttk.Frame):
         self.minimum_short_note = tk.StringVar(value="40")
         self.keep_accompaniment = tk.BooleanVar(value=False)
         folders = read_folders()
+        self.custom_stem_model.set(folders.get("custom_six_stem", ""))
+        self.pymss_model.set(folders.get("pymss_model", ""))
+        if self.pymss_model.get():
+            self.stem_model.set('pymss model')
+        if folders.get('pymss_source') in ('huggingface', 'modelscope', 'hf-mirror'):
+            self.pymss_source.set(folders['pymss_source'])
         self.musescore_path.set(folders.get("musescore", ""))
         self.input_folder = folders.get("input", "")
         self.source = tk.StringVar()
@@ -361,9 +381,14 @@ class Application(ttk.Frame):
         self.piano_only_option = ttk.Checkbutton(card, text="Isolate piano before transcribing (six-stem model)",
                                                 variable=self.piano_only, style="App.TCheckbutton",
                                                 command=self.update_separation_controls)
-        self.piano_only_option.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.piano_only_option.grid(row=9, column=0, sticky="w", pady=(4, 0))
         Tooltip(self.piano_only_option, "Runs the optional six-stem HT-Demucs model, then transcribes only its piano stem. "
                 "Download it in Models & import. Separation can introduce artifacts.")
+        self.input_piano_option = ttk.Checkbutton(card, text="Input is already piano only",
+                                                  variable=self.input_is_piano, style="App.TCheckbutton")
+        self.input_piano_option.grid(row=9, column=1, sticky="w", padx=(14, 0), pady=(4, 0))
+        Tooltip(self.input_piano_option, "Use an already isolated piano recording without separation. "
+                "For multi-instrument models, predicted tracks are combined for a piano score and the original MIDI is kept.")
         self.vocal_option = ttk.Checkbutton(card, text="Add a separate vocal track to MIDI",
                                             variable=self.include_vocals, style="App.TCheckbutton",
                                             command=self.update_vocal_controls)
@@ -475,6 +500,28 @@ class Application(ttk.Frame):
         key_picker.pack(side="left")
         Tooltip(key_picker, "Auto estimates a key when there is enough evidence. Review key signatures and enharmonic spelling.")
 
+        self.stem_settings = ttk.Frame(card, style="Card.TFrame")
+        self.stem_settings.grid(row=25, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Label(self.stem_settings, text="Stem model", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
+        self.stem_model_picker = ttk.Combobox(self.stem_settings, textvariable=self.stem_model,
+            values=["Built-in six-stem", "Custom six-stem ONNX", "pymss model"], state="readonly", width=23)
+        self.stem_model_picker.pack(side="left", padx=(0, 6))
+        self.stem_model_picker.bind('<<ComboboxSelected>>', self.update_separation_controls)
+        self.custom_stem_button = ttk.Button(self.stem_settings, text="Choose ONNX...", style="Link.TButton", command=self.choose_custom_stem_model)
+        self.custom_stem_button.pack(side="left", padx=(0, 8))
+        self.pymss_button = ttk.Button(self.stem_settings, text="Browse pymss models...", style="Link.TButton", command=self.show_pymss_models)
+        self.pymss_button.pack(side="left", padx=(0, 8))
+        ttk.Label(self.stem_settings, text="Save", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
+        self.stem_choice_picker = ttk.Combobox(self.stem_settings, textvariable=self.stem_choice,
+            values=["All", "Piano", "Vocals", "Drums", "Bass", "Guitar", "Other", "Instrumental", "Accompaniment"], state="readonly", width=13)
+        self.stem_choice_picker.pack(side="left")
+        Tooltip(self.custom_stem_button, "Choose a six-stem ONNX model with the same mix/stems interface and output order as the built-in HT-Demucs model. Other architectures are not supported.")
+        Tooltip(self.stem_choice_picker, "Choose which output to save. For pymss you may type another stem name; All saves every output. Models may still compute unselected stems.")
+        self.pymss_selected_label = ttk.Label(card, textvariable=self.pymss_model, style="CardHint.TLabel")
+        self.pymss_selected_label.grid(row=26, column=0, columnspan=2, sticky='w')
+        self.stem_settings.grid_remove()
+        self.pymss_selected_label.grid_remove()
+
         self.settings_card = ttk.Frame(body, style="Card.TFrame", padding=(22, 12))
         self.settings_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         self.settings_card.columnconfigure(0, weight=1)
@@ -576,6 +623,12 @@ class Application(ttk.Frame):
 
     def mode_changed(self, event=None):
         mode, input_kind, output_kind = MODES[self.mode.get()]
+        if mode == "stems" or (mode == "music" and self.piano_only.get()):
+            self.stem_settings.grid()
+            self.pymss_selected_label.grid()
+        else:
+            self.stem_settings.grid_remove()
+            self.pymss_selected_label.grid_remove()
         self.start_button.configure(text="Separate audio  →" if mode == "stems" else "Start transcription  →")
         if mode == "music":
             selected_model = self.music_model.get()
@@ -590,6 +643,7 @@ class Application(ttk.Frame):
             self.models_button.configure(state="normal")
             self.separation_option.configure(state="normal")
             self.piano_only_option.configure(state="normal")
+            self.input_piano_option.configure(state="normal")
             self.vocal_option.configure(state="normal")
             self.separator_picker.configure(state="readonly")
             self.separation_models_button.configure(state="normal")
@@ -664,6 +718,7 @@ class Application(ttk.Frame):
             self.models_button.configure(state="normal" if mode == "stems" else "disabled")
             self.separation_option.configure(state="disabled")
             self.piano_only_option.configure(state="disabled")
+            self.input_piano_option.configure(state="disabled")
             self.vocal_option.configure(state="disabled")
             self.separator_picker.configure(state="disabled")
             self.separation_models_button.configure(state="disabled")
@@ -709,8 +764,23 @@ class Application(ttk.Frame):
         uvr = (self.mode.get() == "Piano and instruments" and
                (self.remove_vocals.get() or self.include_vocals.get()) and
                self.separator_model.get() == "UVR MDX (recommended)")
-        stems = self.mode.get() == "Separate stems (audio)"
-        piano = self.mode.get() == "Piano and instruments" and self.piano_only.get()
+        stems = self.mode.get() == "Separate stems (audio)" and self.stem_model.get() != 'pymss model'
+        music_piano = self.mode.get() == 'Piano and instruments' and self.piano_only.get()
+        if music_piano:
+            self.stem_settings.grid()
+            self.pymss_selected_label.grid()
+        elif self.mode.get() != 'Separate stems (audio)':
+            self.stem_settings.grid_remove()
+            self.pymss_selected_label.grid_remove()
+        self.stem_choice_picker.configure(state='disabled' if music_piano else
+                                          'normal' if self.stem_model.get() == 'pymss model' else 'readonly')
+        choices = ['All', 'Piano', 'Vocals', 'Drums', 'Bass', 'Guitar', 'Other']
+        if self.stem_model.get() == 'pymss model':
+            choices += ['Instrumental', 'Accompaniment']
+        elif self.stem_choice.get() not in choices:
+            self.stem_choice.set('All')
+        self.stem_choice_picker.configure(values=choices)
+        piano = self.mode.get() == "Piano and instruments" and self.piano_only.get() and self.stem_model.get() != 'pymss model'
         self.gpu_option.configure(state="normal" if uvr or stems or piano else "disabled",
                                   text="Use GPU for separation (DirectML)" if stems else
                                        "Use GPU for UVR separation (DirectML)")
@@ -1076,6 +1146,128 @@ class Application(ttk.Frame):
             self.destination.set(path)
             self.save_folders(output_folder=path)
 
+    def choose_custom_stem_model(self):
+        path = filedialog.askopenfilename(parent=self.master, title="Choose compatible six-stem ONNX model",
+                                          filetypes=[("ONNX models", "*.onnx"), ("All files", "*.*")])
+        if path:
+            self.custom_stem_model.set(path)
+            self.stem_model.set("Custom six-stem ONNX")
+            try:
+                remember_folders(custom_six_stem=path)
+            except OSError:
+                self.status.set("Model path could not be saved for next time.")
+
+    def show_pymss_models(self):
+        from omnizart.desktop.optional_models import install, ready
+        if not ready('pymss'):
+            if self.optional_installing:
+                return
+            self.optional_installing = True
+            self.status.set('Installing the optional pymss CPU runtime; this may take several minutes...')
+            def install_pymss():
+                try:
+                    install('pymss')
+                    self.messages.put(('pymss_install_done', ''))
+                except Exception as exc:
+                    self.messages.put(('pymss_install_done', str(exc)))
+            threading.Thread(target=install_pymss, daemon=True).start()
+            return
+        from omnizart.desktop.pymss_backend import catalog
+        try:
+            entries = catalog()
+        except (OSError, RuntimeError, ValueError) as exc:
+            messagebox.showerror('pymss models', str(exc))
+            return
+        dialog = tk.Toplevel(self.master)
+        dialog.title('pymss models')
+        dialog.geometry('760x500')
+        search = tk.StringVar()
+        ttk.Label(dialog, text='Search models by name or category').pack(anchor='w', padx=12, pady=(12, 0))
+        ttk.Entry(dialog, textvariable=search).pack(fill='x', padx=12, pady=6)
+        source_row = ttk.Frame(dialog)
+        source_row.pack(fill='x', padx=12, pady=(0, 6))
+        ttk.Label(source_row, text='Download source').pack(side='left', padx=(0, 8))
+        ttk.Combobox(source_row, textvariable=self.pymss_source, values=['huggingface', 'modelscope', 'hf-mirror'],
+                     state='readonly', width=15).pack(side='left')
+        listing = tk.Listbox(dialog, exportselection=False)
+        listing.pack(fill='both', expand=True, padx=12)
+        visible = []
+        def refresh(*_):
+            visible.clear()
+            listing.delete(0, 'end')
+            query = search.get().casefold()
+            for item in entries:
+                name = str(item['name'])
+                detail = f"{name}  |  {item.get('primary_category', '')}  |  {item.get('target_stem', '')}"
+                if query in detail.casefold():
+                    visible.append(name)
+                    listing.insert('end', detail)
+        search.trace_add('write', refresh)
+        refresh()
+        def selected():
+            selection = listing.curselection()
+            return visible[selection[0]] if selection else None
+        def choose():
+            name = selected()
+            if name:
+                self.pymss_model.set(name)
+                self.stem_model.set('pymss model')
+                self.update_separation_controls()
+                self.remember_pymss_choice()
+                self.status.set(f'pymss model selected: {name}')
+                dialog.destroy()
+        def download():
+            name = selected()
+            if not name:
+                return
+            source = self.pymss_source.get()
+            self.status.set(f'Downloading pymss model: {name}')
+            def work():
+                from omnizart.desktop.pymss_backend import download as download_model
+                try:
+                    download_model(name, source)
+                    self.messages.put(('pymss_model_done', (name, '')))
+                except Exception as exc:
+                    self.messages.put(('pymss_model_done', (name, str(exc))))
+            threading.Thread(target=work, daemon=True).start()
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill='x', padx=12, pady=12)
+        ttk.Button(buttons, text='Use selected model', command=choose).pack(side='left')
+        ttk.Button(buttons, text='Download selected', command=download).pack(side='left', padx=6)
+        ttk.Button(buttons, text='Import custom model...', command=lambda: self.import_pymss_model(dialog)).pack(side='left')
+
+    def import_pymss_model(self, parent):
+        from tkinter import simpledialog
+        from omnizart.desktop.pymss_backend import register
+        weights = filedialog.askopenfilename(parent=parent, title='Choose pymss model weights')
+        if not weights:
+            return
+        config = filedialog.askopenfilename(parent=parent, title='Choose the matching model YAML (cancel if not required)',
+                                            filetypes=[('YAML', '*.yaml *.yml'), ('All files', '*.*')])
+        name = simpledialog.askstring('Model name', 'Name for this model:', parent=parent, initialvalue=Path(weights).stem)
+        if not name:
+            return
+        architecture = simpledialog.askstring('Model architecture', 'pymss architecture (for example bs_roformer, scnet, htdemucs or vr):', parent=parent)
+        if not architecture:
+            return
+        try:
+            register(name, architecture, weights, config or None)
+        except (OSError, RuntimeError, ValueError) as exc:
+            messagebox.showerror('Custom pymss model', str(exc), parent=parent)
+            return
+        self.pymss_model.set(name)
+        self.stem_model.set('pymss model')
+        self.update_separation_controls()
+        self.remember_pymss_choice()
+        self.status.set(f'Custom pymss model registered: {name}')
+        parent.destroy()
+
+    def remember_pymss_choice(self):
+        try:
+            remember_folders(pymss_model=self.pymss_model.get(), pymss_source=self.pymss_source.get())
+        except OSError:
+            self.status.set('pymss model choice could not be saved for next time.')
+
     def save_folders(self, input_folder=None, output_folder=None):
         try:
             remember_folders(input_folder, output_folder)
@@ -1099,6 +1291,9 @@ class Application(ttk.Frame):
             return
         selected_model = self.music_model.get()
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)
+        if mode == "music" and self.input_is_piano.get() and (self.piano_only.get() or self.remove_vocals.get() or self.include_vocals.get()):
+            messagebox.showerror("Piano input", "Already-isolated piano cannot be combined with separation or a vocal track. Turn those options off.")
+            return
         if mode == "music" and selected_model in ("YourMT3", "MuScriptor"):
             from omnizart.desktop.optional_models import install, ready
             if not ready(selected_model):
@@ -1123,8 +1318,8 @@ class Application(ttk.Frame):
                     messagebox.showerror("MuScriptor model", f"Download the small model from its Hugging Face page and place exactly one .safetensors file and its config.json here:\n\n{model_folder()}")
                     return
         if mode == "music" and self.musescore_export.get() and self.neural_staff.get():
-            if not (self.piano_only.get() or selected_model in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano")):
-                messagebox.showerror("Neural piano score", "Select a piano model or piano-only separation for neural hand assignment.")
+            if not (self.input_is_piano.get() or self.piano_only.get() or selected_model in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano")):
+                messagebox.showerror("Neural piano score", "Select a piano model, isolate piano, or mark the input as already piano only.")
                 return
             from omnizart.desktop.optional_models import install, ready
             if not ready("Piano SVSep"):
@@ -1185,19 +1380,26 @@ class Application(ttk.Frame):
             if not available:
                 messagebox.showerror("Transkun V2 Aug", "Open Models & import to download or import the model archive.")
                 return
-        if mode == "stems":
-            from omnizart.desktop.six_stems import model_path, MODEL_SIZE
+        uses_stem_model = mode == 'stems' or (mode == 'music' and self.piano_only.get())
+        if uses_stem_model and self.stem_model.get() == "pymss model":
+            from omnizart.desktop.optional_models import ready
+            if not ready('pymss') or not self.pymss_model.get().strip():
+                messagebox.showerror('pymss model', 'Use Browse pymss models to install pymss and choose a model.')
+                return
+        elif uses_stem_model and self.stem_model.get() == "Custom six-stem ONNX":
+            custom = Path(self.custom_stem_model.get().strip())
+            if not custom.is_file() or custom.suffix.lower() != '.onnx':
+                messagebox.showerror("Custom six-stem model", "Choose an existing compatible six-stem ONNX file.")
+                return
+        elif uses_stem_model:
+            from omnizart.desktop.six_stems import model_path, MODEL_SIZE, verify_model
             checkpoint = model_path()
             try:
-                available = checkpoint.is_file() and checkpoint.stat().st_size == MODEL_SIZE
+                available = (verify_model(checkpoint) if mode == 'music' else
+                             checkpoint.is_file() and checkpoint.stat().st_size == MODEL_SIZE)
             except OSError:
                 available = False
             if not available:
-                messagebox.showerror("Six-stem model", "Open Models & import to download or import the six-stem model.")
-                return
-        if mode == "music" and self.piano_only.get():
-            from omnizart.desktop.six_stems import model_path, verify_model
-            if not verify_model(model_path()):
                 messagebox.showerror("Six-stem model", "Open Models & import to download or import the six-stem model.")
                 return
         optional_separators = {"UVR Vocal FT (CPU)": "vocal-ft", "UVR Instrumental HQ4 (CPU)": "inst-hq4", "UVR Instrumental HQ5 (CPU)": "inst-hq5"}
@@ -1211,7 +1413,7 @@ class Application(ttk.Frame):
             if self.music_model.get() not in ("Pop", "Stream", "Basic Pitch", CUSTOM_MODEL) and self.music_model.get() not in self.custom_models:
                 values["instrument"] = ""
             options = music_options(values, self.music_model.get()) if mode == "music" else []
-            gpu_enabled = (self.use_gpu.get() and (mode == "stems" or (mode == "music" and self.piano_only.get()) or
+            gpu_enabled = (self.use_gpu.get() and ((mode == "stems" and self.stem_model.get() != 'pymss model') or (mode == "music" and self.piano_only.get() and self.stem_model.get() != 'pymss model') or
                            (mode == "music" and (self.remove_vocals.get() or self.include_vocals.get()) and
                             self.separator_model.get() == "UVR MDX (recommended)")))
             gpu_index = self.gpu_index.get().strip()
@@ -1272,8 +1474,15 @@ class Application(ttk.Frame):
             cmd.extend(["--model-path", model, *options])
             if self.piano_only.get():
                 cmd.append("--piano-only")
+                if self.stem_model.get() == 'pymss model':
+                    cmd.extend(['--piano-separator', 'pymss', '--pymss-model', self.pymss_model.get().strip(),
+                                '--pymss-source', self.pymss_source.get()])
+                elif self.stem_model.get() == 'Custom six-stem ONNX':
+                    cmd.extend(['--custom-stem-model', self.custom_stem_model.get().strip()])
                 if gpu_enabled:
                     cmd.extend(["--uvr-device", "directml", "--gpu-index", gpu_index])
+            if self.input_is_piano.get():
+                cmd.append("--input-is-piano")
             if self.compare_enabled.get():
                 cmd.extend(["--compare-midi", self.compare_path.get()])
             if self.musescore_export.get():
@@ -1312,8 +1521,19 @@ class Application(ttk.Frame):
                 cmd.append("--remove-vocals")
                 if self.keep_accompaniment.get():
                     cmd.append("--save-accompaniment")
-        elif mode == "stems" and gpu_enabled:
-            cmd.extend(["--device", "directml", "--gpu-index", gpu_index])
+        elif mode == "stems":
+            if gpu_enabled:
+                cmd.extend(["--device", "directml", "--gpu-index", gpu_index])
+            if self.stem_model.get() == "Custom six-stem ONNX":
+                cmd.extend(["--custom-model", self.custom_stem_model.get().strip()])
+            elif self.stem_model.get() == "pymss model":
+                cmd.extend(["--backend", "pymss", "--pymss-model", self.pymss_model.get().strip(),
+                            '--pymss-source', self.pymss_source.get()])
+            if self.stem_choice.get() != "All":
+                cmd.extend(["--stem", self.stem_choice.get().lower()])
+        self.active_stems = (None if mode == 'stems' and self.stem_model.get() == 'pymss model' and self.stem_choice.get() == 'All' else
+                             (self.stem_choice.get().lower(),) if mode == "stems" and self.stem_choice.get() != "All"
+                             else ("drums", "bass", "other", "vocals", "guitar", "piano"))
         self.score_warnings = []
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
@@ -1366,6 +1586,23 @@ class Application(ttk.Frame):
                         self.status.set(f"Could not install {model}.")
                         messagebox.showerror(f"{model} setup failed", output or "Package installation failed.")
                     continue
+                if kind == 'pymss_install_done':
+                    self.optional_installing = False
+                    if value:
+                        self.status.set('Could not install pymss.')
+                        messagebox.showerror('pymss setup failed', value)
+                    else:
+                        self.status.set('pymss is ready.')
+                        self.show_pymss_models()
+                    continue
+                if kind == 'pymss_model_done':
+                    name, error = value
+                    if error:
+                        self.status.set(f'Could not download {name}.')
+                        messagebox.showerror('pymss model download failed', error)
+                    else:
+                        self.status.set(f'pymss model ready: {name}')
+                    continue
                 self.process = None
                 if self.output_lock:
                     try:
@@ -1382,9 +1619,15 @@ class Application(ttk.Frame):
                 if kind == "error":
                     self.status.set("Could not start transcription.")
                     messagebox.showerror("Transcription failed", value)
+                elif value[0] == 0 and self.active_mode == "stems" and self.output_base and getattr(self, 'active_stems', None) is None:
+                    if any(p.is_file() and p.name.casefold().startswith((self.output_base.name + '_').casefold()) and p.suffix.lower() == '.wav'
+                           for p in self.output_base.parent.iterdir()):
+                        self.status.set('Finished. Your results are ready.')
+                    else:
+                        self.status.set('No stem files were produced. Open details for more information.')
                 elif value[0] == 0 and self.active_mode == "stems" and self.output_base and not all(
                         Path(str(self.output_base) + "_" + stem + ".wav").is_file()
-                        for stem in ("drums", "bass", "other", "vocals", "guitar", "piano")):
+                        for stem in getattr(self, "active_stems", ("drums", "bass", "other", "vocals", "guitar", "piano"))):
                     self.status.set("Some stem files are missing. Open details for more information.")
                 elif value[0] == 0 and self.output_base and any(
                         Path(str(self.output_base) + suffix).is_file() for suffix in RESULT_SUFFIXES):

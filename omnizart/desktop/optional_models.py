@@ -11,11 +11,12 @@ from tempfile import TemporaryDirectory
 PACKAGES = {
     "YourMT3": "mt3-infer[torch] @ https://github.com/openmirlab/mt3-infer/archive/refs/heads/master.zip",
     "MuScriptor": "muscriptor @ https://github.com/muscriptor/muscriptor/archive/refs/heads/main.zip",
+    "pymss": "pymss==2.4.0",
 }
 
 # Revision 2 repairs YourMT3's Transformers constraint and gives the score
 # backends their own CPU PyTorch, including in nested Python environments.
-READY_REVISIONS = {"YourMT3": "2", "MuScriptor": "ready", "Piano SVSep": "2", "Beat This": "2"}
+READY_REVISIONS = {"YourMT3": "2", "MuScriptor": "ready", "Piano SVSep": "2", "Beat This": "2", "pymss": "1"}
 SVSEP_COMMIT = "1462e7c28d7adaae033150883a7cb00238ee364a"
 SVSEP_SHA256 = "1f71ab8b6c7cd271e18adfba5ccbcd634a8530a44e46aabede27e15ce84dbe32"
 SVSEP_URL = f"https://raw.githubusercontent.com/CPJKU/piano_svsep/{SVSEP_COMMIT}/pretrained_models/model.ckpt"
@@ -77,6 +78,7 @@ def _verify_svsep(python, checkpoint, flags):
 def ready(model):
     try:
         return (python_path(model).is_file() and
+                (model != "pymss" or (environment(model) / ".runtime-source").read_text(encoding="utf-8") == _runtime_identity()) and
                 (model not in ("Piano SVSep", "Beat This") or
                  (_verified_model(environment(model) / "model.ckpt", SVSEP_SHA256 if model == "Piano SVSep" else BEAT_SHA256) and
                   (environment(model) / ".runtime-source").read_text(encoding="utf-8") == _runtime_identity())) and
@@ -93,7 +95,7 @@ def install(model):
     base_python = Path(sys.executable)
     if base_python.name.lower() == "pythonw.exe":
         base_python = base_python.with_name("python.exe")
-    if model in ("Piano SVSep", "Beat This"):
+    if model in ("Piano SVSep", "Beat This", "pymss"):
         # A venv created inside another venv does not inherit the parent venv's
         # site-packages. Install CPU PyTorch locally instead of assuming the
         # packaged runtime's copy is visible or modifying that runtime.
@@ -109,9 +111,11 @@ def install(model):
                             "scikit-learn==1.6.0", "pandas==2.2.3", "gitpython"]
             pip = [str(python_path(model)), "-m", "pip", "install", *dependencies,
                    "-f", "https://data.pyg.org/whl/torch-2.5.0+cpu.html"]
-        else:
+        elif model == "Beat This":
             pip = [str(python_path(model)), "-m", "pip", "install", "beat-this==1.1.0",
                    "einops==0.8.2", "rotary-embedding-torch==0.9.2"]
+        else:
+            pip = [str(python_path(model)), "-m", "pip", "install", PACKAGES[model]]
     else:
         venv = [str(base_python), "-m", "venv", str(folder)]
         dependencies = [PACKAGES[model]]
@@ -119,11 +123,13 @@ def install(model):
             dependencies.append("transformers==4.43.4")
         pip = [str(python_path(model)), "-m", "pip", "install", *dependencies]
     commands = [venv]
-    if model in ("Piano SVSep", "Beat This"):
+    if model in ("Piano SVSep", "Beat This", "pymss"):
         commands.append(install_torch)
     commands.append(pip)
-    if model in ("Piano SVSep", "Beat This"):
+    if model in ("Piano SVSep", "Beat This", "pymss"):
         commands.append([str(python_path(model)), "-c", "import torch; assert torch.__version__.split('+')[0] == '2.5.1' and torch.version.cuda is None, 'This model requires CPU PyTorch 2.5.1.'"])
+    if model == "pymss":
+        commands.append([str(python_path(model)), "-c", "import pymss, pymss_core, av; print('pymss ready')"])
     for command in commands:
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", creationflags=flags)
@@ -149,5 +155,7 @@ def install(model):
             temporary.unlink(missing_ok=True)
         if model == "Piano SVSep":
             _verify_svsep(python_path(model), target, flags)
+        (folder / ".runtime-source").write_text(_runtime_identity(), encoding="utf-8")
+    if model == "pymss":
         (folder / ".runtime-source").write_text(_runtime_identity(), encoding="utf-8")
     marker.write_text(READY_REVISIONS[model], encoding="utf-8")

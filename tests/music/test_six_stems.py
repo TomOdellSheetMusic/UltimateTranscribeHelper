@@ -23,6 +23,19 @@ class FakeSession:
 
 
 class SixStemTests(unittest.TestCase):
+    def test_selected_stems_and_custom_model(self):
+        with TemporaryDirectory() as folder:
+            folder = Path(folder)
+            source, model = folder / 'song.wav', folder / 'custom.onnx'
+            sf.write(str(source), np.zeros((8, 2), dtype=np.float32), 44100)
+            model.touch()
+            fake_ort = types.SimpleNamespace(SessionOptions=lambda: types.SimpleNamespace(), InferenceSession=FakeSession)
+            with patch.object(six_stems, 'SEGMENT_SAMPLES', 8), \
+                 patch.dict('sys.modules', {'onnxruntime': fake_ort, 'librosa': types.SimpleNamespace()}):
+                outputs = six_stems.separate(source, folder / 'out', selected_stems=['piano'], custom_model=model)
+            self.assertEqual([p.name for p in outputs], ['out_piano.wav'])
+            self.assertFalse((folder / 'out_vocals.wav').exists())
+
     def test_verified_model_download_and_invalid_import(self):
         data = b"model"
         with TemporaryDirectory() as folder:

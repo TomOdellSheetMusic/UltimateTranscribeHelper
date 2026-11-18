@@ -10,6 +10,23 @@ from omnizart.desktop import muscriptor, optional_models, yourmt3
 
 
 class OptionalModelsTest(unittest.TestCase):
+    def test_pymss_runtime_is_isolated_and_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            python = folder / ('Scripts/python.exe' if optional_models.os.name == 'nt' else 'bin/python')
+            python.parent.mkdir(parents=True)
+            python.touch()
+            with patch.object(optional_models, 'environment', return_value=folder), \
+                 patch.object(optional_models.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='')) as run:
+                optional_models.install('pymss')
+                self.assertTrue(optional_models.ready('pymss'))
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertIn('torch==2.5.1+cpu', commands[1])
+                self.assertIn('pymss==2.4.0', commands[2])
+                self.assertIn('import pymss, pymss_core, av', commands[-1][-1])
+                (folder / '.runtime-source').write_text('different runtime', encoding='utf-8')
+                self.assertFalse(optional_models.ready('pymss'))
+
     def test_muscriptor_requires_companion_config(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(muscriptor, "model_folder", return_value=Path(directory)):
             weights = Path(directory) / "model.safetensors"

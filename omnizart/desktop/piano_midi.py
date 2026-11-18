@@ -3,7 +3,7 @@ from pathlib import Path
 import warnings
 
 
-def write_single_piano(source, destination):
+def write_single_piano(source, destination, model='YourMT3'):
     """Retain predicted notes while replacing model instrument labels.
 
     This does not verify whether a note actually belongs to a piano. The caller
@@ -29,5 +29,5 @@ def write_single_piano(source, destination):
             output.close()
             destination.unlink(missing_ok=True)
             raise
-    warnings.warn('YourMT3 instrument labels were combined into one piano track. '
+    warnings.warn(f'{model} instrument labels were combined into one piano track. '
                   'The original multitrack MIDI is preserved; notes may still need correction.', UserWarning)
