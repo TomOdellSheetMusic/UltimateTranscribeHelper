@@ -603,14 +603,19 @@ class Application(ttk.Frame):
         queue_list = ttk.Frame(queue_card, style="Card.TFrame")
         queue_list.grid(row=2, column=0, sticky='ew')
         queue_list.columnconfigure(0, weight=1)
-        self.queue_view = ttk.Treeview(queue_list, columns=('file', 'mode', 'state'), show='headings', height=4, selectmode='browse', style='Queue.Treeview')
-        for name, title, width in (('file', 'File', 320), ('mode', 'Task', 190), ('state', 'Status', 160)):
-            self.queue_view.heading(name, text=title)
-            self.queue_view.column(name, width=width, minwidth=80, stretch=True)
+        self.queue_view = ttk.Treeview(queue_list, columns=('file', 'mode', 'state', 'folder'), show='headings', height=4, selectmode='browse', style='Queue.Treeview')
+        for name, title, width in (('file', 'File', 270), ('mode', 'Task', 160), ('state', 'Status', 120), ('folder', 'Results', 110)):
+            self.queue_view.heading(name, text=title, anchor='w')
+            self.queue_view.column(name, width=width, minwidth=70, stretch=name != 'folder', anchor='w')
         self.queue_view.grid(row=0, column=0, sticky='ew')
         queue_scroll = ttk.Scrollbar(queue_list, orient='vertical', command=self.queue_view.yview, style='App.Vertical.TScrollbar')
         queue_scroll.grid(row=0, column=1, sticky='ns')
-        self.queue_view.configure(yscrollcommand=queue_scroll.set)
+        def queue_scrolled(first, last):
+            queue_scroll.set(first, last)
+            self.after_idle(self._position_queue_buttons)
+        self.queue_view.configure(yscrollcommand=queue_scrolled)
+        self.queue_view.bind('<Configure>', lambda event: self.after_idle(self._position_queue_buttons))
+        self.queue_view.bind('<MouseWheel>', lambda event: self.after_idle(self._position_queue_buttons), add='+')
         self.queue_view.bind('<<TreeviewSelect>>', self._show_selected_job)
         queue_actions = ttk.Frame(queue_card, style='Card.TFrame')
         queue_actions.grid(row=3, column=0, sticky='w', pady=(8, 0))
@@ -629,7 +634,7 @@ class Application(ttk.Frame):
         self.progress = ttk.Progressbar(footer, mode="indeterminate", style="App.Horizontal.TProgressbar")
         self.progress.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(14, 0))
         self.progress.grid_remove()
-        self.open_button = ttk.Button(footer, text="Open results folder", style="Secondary.TButton", command=self.open_results, state="disabled")
+        self.open_button = ttk.Button(footer, text="Open selected folder", style="Secondary.TButton", command=self.open_results, state="disabled")
         self.open_button.grid(row=3, column=1, sticky="e", pady=(12, 0))
         self.log_button = ttk.Button(footer, text="Show details  +", style="RootLink.TButton", command=self.toggle_log)
         self.log_button.grid(row=3, column=0, sticky="w", pady=(12, 0))
@@ -659,6 +664,8 @@ class Application(ttk.Frame):
         style.configure('Queue.Treeview', background=FIELD, fieldbackground=FIELD, foreground=TEXT, borderwidth=0, rowheight=29, font=('Segoe UI', 10))
         style.map('Queue.Treeview', background=[('selected', '#6357ad')], foreground=[('selected', TEXT)])
         style.configure('Queue.Treeview.Heading', background=PANEL, foreground=MUTED, relief='flat', font=('Segoe UI', 9, 'bold'))
+        style.configure('QueueAction.TButton', background='#35415a', foreground=TEXT, borderwidth=0, padding=(4, 1), font=('Segoe UI', 9))
+        style.map('QueueAction.TButton', background=[('active', '#586b8b')])
         for name, background, foreground, font in (
             ("Eyebrow.TLabel", BG, ACCENT, ("Segoe UI", 9, "bold")),
             ("Title.TLabel", BG, TEXT, ("Segoe UI", 25, "bold")),
@@ -973,7 +980,9 @@ class Application(ttk.Frame):
         job = {'id': str(self._job_sequence), 'snapshot': self._form_snapshot(), 'source': str(source),
                'mode': self.mode.get(), 'state': 'Waiting', 'log': '', 'output': None}
         self.jobs.append(job)
-        self.queue_view.insert('', 'end', iid=job['id'], values=(source.name, job['mode'], job['state']))
+        self.queue_view.insert('', 'end', iid=job['id'], values=(source.name, job['mode'], job['state'], ''))
+        job['folder_button'] = ttk.Button(self.queue_view, text='Open folder', style='QueueAction.TButton',
+                                          command=lambda: self._open_job_folder(job))
         if self.active_job is None and not self.running and not self.optional_installing:
             self._start_next_job()
         else:
@@ -1006,7 +1015,28 @@ class Application(ttk.Frame):
     def _update_job(self, job, state):
         job['state'] = state
         if self.queue_view.exists(job['id']):
-            self.queue_view.item(job['id'], values=(Path(job['source']).name, job['mode'], state))
+            self.queue_view.item(job['id'], values=(Path(job['source']).name, job['mode'], state, ''))
+            self.after_idle(self._position_queue_buttons)
+
+    def _position_queue_buttons(self):
+        for job in self.jobs:
+            button = job.get('folder_button')
+            if button is None:
+                continue
+            bounds = self.queue_view.bbox(job['id'], 'folder') if self.queue_view.exists(job['id']) else ()
+            if bounds and job['output'] and job['output'].is_dir():
+                x, y, width, height = bounds
+                button.place(x=x + 2, y=y + 2, width=max(1, width - 4), height=max(1, height - 4))
+            else:
+                button.place_forget()
+
+    def _open_job_folder(self, job):
+        folder = job['output']
+        if folder and folder.is_dir():
+            try:
+                os.startfile(str(folder))
+            except OSError as exc:
+                messagebox.showerror('Cannot open results', str(exc))
 
     def _start_next_job(self):
         if self.active_job is not None or self.running or self.optional_installing:
@@ -1072,6 +1102,7 @@ class Application(ttk.Frame):
             self.status.set('The active job cannot be removed while it is running.')
             return
         self.queue_view.delete(job['id'])
+        job['folder_button'].destroy()
         self.jobs.remove(job)
         self.status.set('Removed job from the queue.')
 
@@ -1079,6 +1110,7 @@ class Application(ttk.Frame):
         for job in self.jobs[:]:
             if job is not self.active_job and job['state'] != 'Waiting':
                 self.queue_view.delete(job['id'])
+                job['folder_button'].destroy()
                 self.jobs.remove(job)
 
     def browse_input(self):
@@ -2002,7 +2034,10 @@ class Application(ttk.Frame):
 
 
 def main():
+    from omnizart.desktop.dpi import enable_windows_dpi_awareness, scale_tk_for_window
+    enable_windows_dpi_awareness()
     root = tk.Tk()
+    scale_tk_for_window(root)
 
     def report_callback_exception(exc_type, exc_value, exc_traceback):
         details = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))

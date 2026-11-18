@@ -4,8 +4,8 @@ Extract the complete archive to a folder, then double-click Omnizart.vbs.
 Choose a transcription type and an input file, select an output folder, and
 click Add to queue. Jobs run one at a time and retain the settings selected
 when added. Drop multiple files onto the input area or choose Add multiple
-files to queue them with the same settings. Select a job to see its details or
-open its results; waiting jobs can be removed. The queue is kept while the app
+files to queue them with the same settings. Select a job to see its details;
+use its Open folder button to open its results. Waiting jobs can be removed. The queue is kept while the app
 is open. Use the Input, Queue and Details buttons to navigate, and the tabs to
 find separation, score, cleanup and model options.
 Results for the same input name share a folder in your chosen

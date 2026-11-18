@@ -11,6 +11,38 @@ from omnizart.desktop.app import Application
 
 
 class RepeatedRunsTests(unittest.TestCase):
+    def test_result_rows_have_aligned_headings_and_independent_folder_buttons(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            first, second = folder / 'one.wav', folder / 'two.wav'
+            first.touch()
+            second.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.os.startfile') as open_folder:
+                root = tk.Tk()
+                try:
+                    app = Application(root)
+                    app.destination.set(str(folder))
+                    app.running = True  # Keep both jobs waiting while their rows are arranged.
+                    app.enqueue_files([first, second])
+                    for index, job in enumerate(app.jobs):
+                        job['output'] = folder / str(index)
+                        job['output'].mkdir()
+                        app._update_job(job, 'Finished')
+                    app._navigate('queue')
+                    root.update()
+                    app._position_queue_buttons()
+                    for column in ('file', 'mode', 'state', 'folder'):
+                        self.assertEqual(app.queue_view.heading(column)['anchor'], 'w')
+                        self.assertEqual(app.queue_view.column(column)['anchor'], 'w')
+                    for job in app.jobs:
+                        self.assertTrue(job['folder_button'].place_info())
+                    app.jobs[1]['folder_button'].invoke()
+                    open_folder.assert_called_once_with(str(folder / '1'))
+                    app.running = False
+                finally:
+                    root.destroy()
+
     def test_hands_option_and_existing_midi_mode(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)
