@@ -446,6 +446,10 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
     if length != int(length) or not 1 <= length <= 64:
         raise ValueError('This time signature is not supported by the score grid.')
     length = int(length)
+    # BeatGrid extrapolates the bar containing audio time zero.  If that bar
+    # starts before the recording, represent only its audible tail as an
+    # implicit pickup rather than inserting silence before time zero.
+    first_left = min(length - 1, grid.unit(0) % length) if grid else 0
     score = ET.Element('score-partwise', version='4.0')
     work = _element(score, 'work')
     _element(work, 'work-title', Path(source).stem)
@@ -489,7 +493,10 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         count = (last + length - 1) // length
         for measure_no in range(count):
             left, right = measure_no * length, (measure_no + 1) * length
-            measure = _element(part, 'measure', number=str(measure_no + 1))
+            if measure_no == 0:
+                left = first_left
+            measure = _element(part, 'measure', number=str(measure_no + 1),
+                               **({'implicit': 'yes'} if measure_no == 0 and first_left else {}))
             if measure_no == 0:
                 attrs = _element(measure, 'attributes')
                 _element(attrs, 'divisions', 4)
@@ -510,11 +517,18 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                 dt = _element(direction, 'direction-type')
                 metro = _element(dt, 'metronome')
                 _element(metro, 'beat-unit', 'quarter')
-                initial_bpm = grid.tempo_marks(length, 0)[0][1] if grid else bpm
+                initial_bpm = bpm
+                if grid:
+                    initial_marks = grid.tempo_marks(length, 0)
+                    initial_bpm = next((value for offset, value in reversed(initial_marks) if offset <= first_left), bpm)
                 _element(metro, 'per-minute', f'{initial_bpm:g}')
                 _element(direction, 'sound', tempo=f'{initial_bpm:g}')
             if grid:
                 for offset, current_bpm in grid.tempo_marks(length, measure_no):
+                    if measure_no == 0:
+                        if offset < first_left:
+                            continue
+                        offset -= first_left
                     direction = _element(measure, 'direction')
                     dtype = _element(direction, 'direction-type')
                     _element(dtype, 'words', '\u200b', **{'print-object': 'no'})
@@ -530,7 +544,7 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             for stream_idx, (staff, lane_idx, lane) in enumerate(streams):
                 if stream_idx:
                     backup = _element(measure, 'backup')
-                    _element(backup, 'duration', length)
+                    _element(backup, 'duration', right - left)
                 voice = str((staff - 1) * 100 + lane_idx + 1)
                 cursor = left
                 for start, end, pitches in lane:

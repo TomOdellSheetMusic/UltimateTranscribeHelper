@@ -33,6 +33,24 @@ class TestKeyAwarePitchSpelling(unittest.TestCase):
 
 
 class NativeScoreTests(unittest.TestCase):
+    def test_partial_opening_measure_preserves_audio_start_time(self):
+        with TemporaryDirectory() as directory:
+            path, output = Path(directory) / 'input.mid', Path(directory) / 'score.musicxml'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([
+                mido.Message('note_on', note=60, velocity=80, time=960),
+                mido.Message('note_off', note=60, time=480)]))
+            midi.save(path)
+            source = path.read_bytes()
+            export_score(path, output, tempo=120, downbeat=1, score_key='C')
+            measures = ET.parse(output).findall('.//part/measure')
+            self.assertEqual(measures[0].get('implicit'), 'yes')
+            self.assertEqual(sum(int(n.findtext('duration')) for n in measures[0].findall('note')
+                                 if n.findtext('voice') == '1'), 8)
+            self.assertTrue(all(b.findtext('duration') == '8' for b in measures[0].findall('backup')))
+            self.assertIsNotNone(measures[1].find('.//note/pitch'))
+            self.assertEqual(path.read_bytes(), source)
+
     def test_explicit_flat_key_writes_signature_and_flat_spelling(self):
         with TemporaryDirectory() as directory:
             path, output = Path(directory) / 'in.mid', Path(directory) / 'out.musicxml'
