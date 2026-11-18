@@ -1,6 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 import mido
@@ -170,6 +171,27 @@ class AdaptiveRhythmTests(unittest.TestCase):
             notes = [n for n in measures[1].findall('note') if n.find('pitch') is not None]
             self.assertEqual([n.findtext('duration') for n in notes], ['8'] * 3)
             self.assertEqual(xml.findtext('.//metronome/per-minute'), '120')
+
+    def test_triplets_follow_variable_audio_beat_grid(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            midi = mido.MidiFile(ticks_per_beat=480)
+            track = mido.MidiTrack()
+            for pitch, duration in ((60, 320), (62, 352), (64, 384)):
+                track.append(mido.Message('note_on', note=pitch, velocity=80))
+                track.append(mido.Message('note_off', note=pitch, time=duration))
+            midi.tracks.append(track)
+            source, score = root / 'varying.mid', root / 'score.musicxml'
+            midi.save(source)
+            beats = [0, .5, 1.1, 1.6, 2.2, 2.8, 3.4, 4, 4.6]
+            with patch('omnizart.desktop.beat_alignment.detect', return_value=(beats, [0, 2.2, 4.6])):
+                export_score(source, score, audio='song.wav', align_bars=True, piano=False, score_key='C')
+            xml = ET.parse(score).getroot()
+            notes = [n for n in xml.findall('.//note') if n.find('pitch') is not None]
+            self.assertEqual([n.findtext('duration') for n in notes], ['8'] * 3)
+            directions = xml.findall('.//direction')
+            self.assertTrue(any(d.findtext('offset') == '12' and abs(float(d.find('sound').get('tempo')) - 100) < .01
+                                for d in directions if d.find('sound') is not None))
 
 
 if __name__ == '__main__':
