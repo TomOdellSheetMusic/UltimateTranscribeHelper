@@ -2,6 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
+import subprocess
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -10,6 +11,18 @@ from omnizart.desktop import pymss_backend
 
 
 class PymssTests(unittest.TestCase):
+    def test_timeout_is_reported_as_separation_error(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'song.wav'
+            source.touch()
+            with patch.object(pymss_backend, 'ready', return_value=True), \
+                 patch.object(pymss_backend, 'python_path', return_value=Path('python')), \
+                 patch.object(pymss_backend, 'model_root', return_value=root / 'models'), \
+                 patch.object(pymss_backend.subprocess, 'run', side_effect=subprocess.TimeoutExpired('pymss', 7200)):
+                with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                    pymss_backend.separate(source, root / 'out', 'model')
+
     def test_selected_stem_and_no_overwrite(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

@@ -29,9 +29,12 @@ def _command(*arguments):
 
 
 def _capture(*arguments):
-    result = subprocess.run(_command(*arguments), env=_environment(), stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
-                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=3600)
+    try:
+        result = subprocess.run(_command(*arguments), env=_environment(), stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=3600)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('pymss model management timed out.') from exc
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout)[-4000:])
     return result.stdout
@@ -66,7 +69,10 @@ def separate(source, output_base, model, selected_stems=None, source_name='huggi
     with TemporaryDirectory(prefix='omnizart-pymss-', dir=str(output_base.parent)) as temp:
         command = _command('infer', model, '--model-dir', model_root(), '--source', source_name,
                            '-i', source, '-o', temp, '--device', 'cpu', '--format', 'wav')
-        result = subprocess.run(command, env=_environment(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=7200)
+        try:
+            result = subprocess.run(command, env=_environment(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=7200)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError('pymss separation timed out.') from exc
         if result.returncode:
             raise RuntimeError(f'pymss separation failed (exit {result.returncode}); see the log.')
         prefix = source.stem + '_'
