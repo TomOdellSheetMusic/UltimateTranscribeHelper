@@ -226,6 +226,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             raise click.ClickException(f"Original MIDI was saved, but comparison failed: {exc}") from exc
         click.echo(f"Comparison saved to {comparison} ({count} differences).")
     analysis = {} if split_hands else None
+    score_error = None
     if score or split_hands:
         from omnizart.desktop.notation import export_score
         score_path = original_target.with_name(original_target.stem + ".musicxml")
@@ -252,7 +253,11 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 _run_musescore(musescore, score_path, pdf)
                 click.echo(f"PDF saved to {pdf}.")
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            raise click.ClickException(f"Original MIDI was saved, but score or hand analysis failed: {exc}") from exc
+            if score and split_hands and analysis and analysis.get('hands') and not simplify_score:
+                score_error = str(exc)
+                click.echo(f'MusicXML export failed: {exc}', err=True)
+            else:
+                raise click.ClickException(f"Original MIDI was saved, but score or hand analysis failed: {exc}") from exc
         if split_hands:
             if not analysis.get('hands'):
                 raise click.ClickException('Original MIDI was saved, but hand splitting requires one piano instrument.')
@@ -272,6 +277,8 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             except (OSError, ValueError) as exc:
                 raise click.ClickException(f'Original MIDI was saved, but hand-track export failed: {exc}') from exc
             click.echo(f'Hand-track MIDI saved to {hands_path} (right: {right}, left: {left}). Review the assignments.')
+        if score_error:
+            raise click.ClickException(f'The final MIDI was saved, but MusicXML export failed: {score_error}')
     elif musescore:
         from omnizart.desktop.score_export import export_formatted_score
         score_path = target.with_name(target.stem + ".musicxml")

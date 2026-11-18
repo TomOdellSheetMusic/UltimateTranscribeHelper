@@ -151,6 +151,24 @@ class HandMidiTests(unittest.TestCase):
             self.assertTrue(output.with_suffix('.mid').is_file())
             self.assertFalse(output.with_name('result_hands.mid').exists())
 
+    def test_score_render_failure_still_saves_final_midi_after_analysis(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(audio_path, model, target, *args):
+                fixture(Path(str(target) + '.mid'))
+            def failing_score(source, destination, **kwargs):
+                kwargs['analysis_out'].update(hands=[1, 2], positions=[(0, 1), (0, 1)],
+                                              grid=None, tempo=120, meter=(3, 4), key=None, piano_key=(1, 4))
+                raise ValueError('score rendering failed')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.notation.export_score', side_effect=failing_score):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                                                               '--model-path', 'Piano', '--score', '--split-hands'])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn('final MIDI was saved', result.output)
+            self.assertTrue(output.with_name('result_hands.mid').is_file())
+
     def test_simplified_score_and_final_midi_omit_same_notes(self):
         with TemporaryDirectory() as folder:
             source, target, score = (Path(folder) / name for name in ('input.mid', 'hands.mid', 'score.musicxml'))
