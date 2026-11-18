@@ -31,6 +31,12 @@ not measured. The mixture includes non-piano sounds; a different arrangement,
 missing reference notes, tempo changes and audio alignment errors all affect
 the scores.
 
+An exploratory run on `Long Way Down`, `Sense`, and `True Colors` produced
+poor note matches. The `Long Way Down` alignment landed near the edge of its
+search range, and the other score/recording pairs may differ in arrangement,
+transposition, or alignment. Those results have not been validated and are not
+included in the model comparison; they cannot be interpreted as model accuracy.
+
 ## First 15 seconds of Best of Friends
 
 The reference is `Best of Friends (piano only).mscz`; the audio is the original
@@ -74,6 +80,12 @@ which could spell key-signature notes incorrectly. It now spells diatonic notes
 according to the signature, including B-sharp, E-sharp, C-flat and F-flat, and
 computes their octave without changing the sounding MIDI pitch. Chromatic
 spelling still needs contextual harmonic analysis.
+
+For a concrete example, `Tom Odell - Silhouette.mscz` is in a seven-sharp key.
+Its stored spelling values include 72 B-sharp note elements and 249 E-sharp
+note elements (including any tied continuations). The old exporter would have
+written those sounding pitches as C and F natural. The change is covered by
+tests over every MIDI pitch and key signature, plus explicit octave examples.
 
 The reference scores also contain tuplets and overlapping voices. Adaptive
 rhythm spelling and tuplets remain unsupported by the exporter's fixed

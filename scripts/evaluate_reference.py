@@ -8,6 +8,7 @@ from collections import defaultdict
 import json
 from pathlib import Path
 import sys
+import warnings
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -178,6 +179,9 @@ def align_audio(reference, audio, offset_min, offset_max, scale_min=.95, scale_m
                 best = (value, float(offset), float(scale))
     if best is None or best[0] <= 0:
         raise ValueError('The audio has no usable onset alignment in this range.')
+    if (best[1] <= offset_min + .05 or best[1] >= offset_max - .05 or
+            best[2] <= scale_min + .005 or best[2] >= scale_max - .005):
+        warnings.warn('Audio alignment is at the edge of the search range; the fit may be wrong.', UserWarning)
     return best[1], best[2], best[0]
 
 
