@@ -112,6 +112,10 @@ and full score are unchanged. This is a playability heuristic: shorter note
 durations may require pedal or differ from the recording, and the result needs
 musician review. The comparison used the estimator's 120 BPM fallback, not a
 verified tempo or a recommended tempo for the song.
+Under the simplifier's own instantaneous checks (at most five distinct notes
+and a span of at most 12 semitones per hand), the revised result had zero
+remaining violations at note attacks. This does not account for fingerings,
+movement speed, pedal, or whether a human can actually play the passage.
 This evaluation does not establish that generated scores are readable.
 
 An automated example reproduces the three quarter-note triplet chords in
