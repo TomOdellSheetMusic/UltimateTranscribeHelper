@@ -81,6 +81,21 @@ class ScoreButtonTests(unittest.TestCase):
                 Application.poll(app)
             self.assertIn('omitted 2 note', warning.call_args.args[1])
 
+    def test_shortened_notes_are_shown_after_success(self):
+        with TemporaryDirectory() as temp:
+            folder = Path(temp)
+            base = folder / 'score'
+            base.with_suffix('.mid').touch()
+            messages = Queue()
+            messages.put(('log', 'notation.py:1: UserWarning: Score simplification shortened 2 held note(s).\n'))
+            messages.put(('done', (0, folder)))
+            app = SimpleNamespace(messages=messages, score_warnings=[], log=Mock(), output_lock=None,
+                                  progress=Mock(), start_button=Mock(), open_button=Mock(), output_folder=folder,
+                                  active_mode='music', output_base=base, status=Mock(), after=Mock(), poll=Mock())
+            with patch('omnizart.desktop.app.midi_note_count', return_value=3), patch('omnizart.desktop.app.messagebox.showwarning') as warning:
+                Application.poll(app)
+            self.assertIn('shortened 2 held', warning.call_args.args[1])
+
 
 if __name__ == '__main__':
     unittest.main()

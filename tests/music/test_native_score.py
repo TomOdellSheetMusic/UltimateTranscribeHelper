@@ -122,6 +122,15 @@ class NativeScoreTests(unittest.TestCase):
         self.assertIn(72, [note[2] for note in result[1]])
         self.assertIn(36, [note[2] for note in result[2]])
 
+    def test_simplification_releases_held_note_before_omitting_attack(self):
+        source = {1: [(0, 12, 60, 80), (4, 8, 84, 90)], 2: []}
+        original = {staff: list(notes) for staff, notes in source.items()}
+        with self.assertWarnsRegex(UserWarning, 'shortened 1 held note'):
+            result = _simplify_piano_hands(source, 16)
+        self.assertEqual(source, original)
+        self.assertCountEqual(result[1], [(0, 4, 60, 80), (4, 8, 84, 90)])
+        self.assertEqual({(n[0], n[2]) for n in result[1]}, {(0, 60), (4, 84)})
+
     def test_overlapping_note_lengths_get_independent_voices(self):
         with TemporaryDirectory() as directory:
             midi_file = Path(directory) / 'input.mid'

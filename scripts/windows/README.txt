@@ -59,8 +59,9 @@ Piano SVSep code, its model checkpoint and dependencies on first use. The code
 is MIT-licensed; the checkpoint's redistribution terms need separate review.
 First-time setup requires internet and can use around 1.6 GiB of disk space.
 Hand assignment preserves the notes and cannot guarantee a playable score.
-The optional simplify-score setting creates a separate simplified piano score
-and may omit notes to reduce hand span and simultaneous notes, with a warning.
+The optional simplify-score setting creates a separate simplified piano score.
+It may shorten held notes or omit notes to reduce hand span and simultaneous
+notes, with a warning.
 The full score and original MIDI are preserved. For non-piano instruments it
 may simplify the score when needed. Review all results for playability.
 

@@ -210,13 +210,13 @@ def _assign_piano_hands(entries, measure_length=16, preferences=None, unit_scale
 
 
 def _simplify_piano_hands(staff_notes, measure_length):
-    """Omit score notes until each instantaneous hand fits basic limits.
+    """Shorten conflicting held notes or omit notes to fit basic hand limits.
 
     Preserve the top melody and lowest bass when possible. This is a heuristic,
     not a guarantee of playability; the input MIDI is never changed.
     """
     output = {staff: list(notes) for staff, notes in staff_notes.items()}
-    omitted = []
+    omitted, shortened = [], []
     for staff in (1, 2):
         notes = output[staff]
         for onset in sorted({note[0] for note in notes}):
@@ -226,6 +226,20 @@ def _simplify_piano_hands(staff_notes, measure_length):
                 if len(pitches) <= 5 and (not pitches or pitches[-1] - pitches[0] <= 12):
                     break
                 protected = max(pitches) if staff == 1 else min(pitches)
+                held = [note for note in active if note[0] < onset]
+                if held:
+                    def release_rank(note):
+                        rest = list(active)
+                        rest.remove(note)
+                        remaining = sorted({other[2] for other in rest})
+                        span = remaining[-1] - remaining[0] if remaining else 0
+                        return (max(0, span - 12), max(0, len(remaining) - 5),
+                                note[2] == protected, note[3], note[0])
+                    released = min(held, key=release_rank)
+                    notes.remove(released)
+                    notes.append((released[0], onset, released[2], released[3]))
+                    shortened.append((staff, released, onset))
+                    continue
                 candidates = [note for note in active if note[2] != protected]
                 if not candidates:
                     break
@@ -236,6 +250,11 @@ def _simplify_piano_hands(staff_notes, measure_length):
                 removed = min(candidates, key=rank)
                 notes.remove(removed)
                 omitted.append((staff, removed))
+    if shortened:
+        measures = sorted({onset // measure_length + 1 for _, _, onset in shortened})
+        warnings.warn('Score simplification shortened %d held note(s) in measures %s to reduce hand reach; '
+                      'the original MIDI is unchanged. Review the score and pedal use.' %
+                      (len(shortened), ', '.join(map(str, measures))), UserWarning)
     if omitted:
         measures = sorted({note[0] // measure_length + 1 for _, note in omitted})
         warnings.warn('Score simplification omitted %d note(s) in measures %s; '

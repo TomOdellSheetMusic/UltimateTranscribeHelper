@@ -96,6 +96,22 @@ When straight and triplet notes coincide, the exporter chooses the closer grid
 for each note. A synthetic two-hand example with three triplet eighths over two
 straight eighths was independently parsed by Music21 with both rhythms intact;
 more complicated polyrhythms still need review.
+
+As a stress check, the user's previously supplied Anymore for Anymore MIDI
+exported successfully with mixed-grid handling enabled. The exporter still
+reported 52 measures with hand-span or held-note concerns and warned about
+dense overlaps; those warnings show that the overall playability problem is not
+solved by rhythm spelling alone. This is not a comparison against a verified
+reference arrangement, and the warning count is not a musical quality score.
+
+For the optional simplified score, a before/after comparison on that MIDI used
+the same quantized notes and hand assignment. The earlier simplifier omitted
+110 note attacks. The revised simplifier retained 104 of those attacks, omitting
+six and shortening 97 held notes to make room for later notes. The input MIDI
+and full score are unchanged. This is a playability heuristic: shorter note
+durations may require pedal or differ from the recording, and the result needs
+musician review. The comparison used the estimator's 120 BPM fallback, not a
+verified tempo or a recommended tempo for the song.
 This evaluation does not establish that generated scores are readable.
 
 An automated example reproduces the three quarter-note triplet chords in
