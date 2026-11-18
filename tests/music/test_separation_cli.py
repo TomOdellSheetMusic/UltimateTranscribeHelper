@@ -9,6 +9,33 @@ from omnizart.cli.music.transcribe import transcribe
 
 
 class SeparationCliTests(unittest.TestCase):
+    def test_pymss_isolation_multitrack_models_support_neural_score(self):
+        import pretty_midi
+        for model in ('YourMT3', 'MuScriptor'):
+            with self.subTest(model=model), TemporaryDirectory() as directory:
+                root = Path(directory)
+                audio = root / 'song.wav'
+                audio.touch()
+                def isolate(_source, base, _model, selected_stems, source_name):
+                    self.assertEqual(selected_stems, ['piano'])
+                    Path(str(base) + '_piano.wav').touch()
+                def transcribe_piano(_audio, _model, output, *args):
+                    midi = pretty_midi.PrettyMIDI()
+                    for program, pitch in ((0, 48), (40, 72)):
+                        instrument = pretty_midi.Instrument(program=program)
+                        instrument.notes.append(pretty_midi.Note(80, pitch, 0, 1))
+                        midi.instruments.append(instrument)
+                    midi.write(str(output))
+                with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                     patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_piano), \
+                     patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]):
+                    result = CliRunner().invoke(transcribe, [str(audio), '--model-path', model,
+                        '--output', str(root), '--piano-only', '--piano-separator', 'pymss',
+                        '--pymss-model', 'piano-model', '--score', '--neural-staff'])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertTrue((root / 'song.musicxml').is_file())
+                self.assertTrue((root / ('song_' + model.lower() + '_multitrack.mid')).is_file())
+
     def test_pymss_piano_isolation_feeds_selected_stem_to_transcription(self):
         import mido
         with TemporaryDirectory() as directory:
