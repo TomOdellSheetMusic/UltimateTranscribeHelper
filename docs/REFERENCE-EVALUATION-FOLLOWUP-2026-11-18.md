@@ -113,6 +113,14 @@ readable or accurate. DuET also reported one duplicate removed and one overlap
 shortened in its listening MIDI. Its model weights are separately licensed under
 CC BY-NC 4.0, and the experiment was local; it is not bundled in Omnizart.
 
+The same model was also run on the 30-second `I Know` Transkun MIDI. Here it
+reported 148 BPM, 4/4 and a six-flat key signature, matching the reference's
+initial 148 BPM, 4/4 and key signature. Its readable output contained 16
+measures and 261 pitched note elements. This checks initial metadata only: its
+bar boundaries, notes, voices and visual readability have not been compared
+measure by measure. These contrasting examples are a reason to evaluate DuET
+further rather than accept or reject it based on one song.
+
 The exporter now marks an extrapolated opening measure as a partial measure,
 starting at recording time zero instead of inserting the part of the bar that
 precedes the recording. A regression test checks the shorter MusicXML duration,
