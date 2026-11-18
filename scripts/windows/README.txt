@@ -11,13 +11,18 @@ find separation, score, cleanup and model options.
 Results for the same input name share a folder in your chosen
 output folder; new runs use numbered file names and do not replace earlier ones.
 
-To create separate hand tracks for a piano-learning application, select "Save
-MIDI with left and right hand tracks" under MIDI cleanup before transcription.
-This saves an additional `_hands.mid` and leaves the original MIDI unchanged.
+Piano beat alignment, neural hand assignment, score simplification and note
+cleanup are combined in the final `_hands.mid`; the original transcription
+is also kept. Beat alignment writes a tempo map and quantizes final notes to
+the same grid as the optional MusicXML score. A pickup may introduce leading
+silence so the first detected bar line falls on a MIDI bar boundary. For a
+hand-split MIDI without those options, select "Save MIDI with left and right
+hand tracks" under MIDI cleanup. Hand assignments are estimates.
 To process an existing file, choose "Split piano MIDI into hands" as the task.
-The input must contain one pitched piano track/channel; percussion is retained.
-Hand assignment is estimated and should be reviewed. Note timing, velocities,
-tempo changes and pedal controls are preserved.
+This standalone mode can also use neural hand assignment; it preserves the
+input timing, velocities, tempo changes and pedal controls. It requires one
+pitched piano track/channel; percussion is retained. Since this mode has no
+audio, it uses the input MIDI's timing instead of detecting audio beats.
 
 Beat tracking accepts MIDI input. The other modes accept audio input. Vocal
 pitch contour produces CSV and WAV files; the other modes produce MIDI and,

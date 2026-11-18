@@ -5,9 +5,12 @@ import unittest
 from click.testing import CliRunner
 import mido
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
 from omnizart.cli.hands import hands
 from omnizart.desktop.hand_midi import split_piano_midi
+from omnizart.desktop.notation import export_score
+from omnizart.desktop.beat_grid import BeatGrid
 from omnizart.cli.music.transcribe import transcribe as music_transcribe
 
 
@@ -80,6 +83,18 @@ class HandMidiTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertTrue(output.with_suffix('.mid').is_file())
 
+    def test_standalone_neural_preserves_original_tick_timing(self):
+        with TemporaryDirectory() as folder:
+            source, output = Path(folder) / 'input.mid', Path(folder) / 'result'
+            fixture(source)
+            with patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]) as neural:
+                result = CliRunner().invoke(hands, ['transcribe', str(source), '--output', str(output), '--neural-staff'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            neural.assert_called_once()
+            midi = mido.MidiFile(output.with_suffix('.mid'))
+            self.assertEqual([(t, m.note) for t, m in absolute(midi.tracks[-2]) if m.type == 'note_on'], [(17, 72)])
+            self.assertEqual([(t, m.note) for t, m in absolute(midi.tracks[-1]) if m.type == 'note_on'], [(17, 48)])
+
     def test_transcription_option_saves_an_extra_hand_midi(self):
         with TemporaryDirectory() as folder:
             audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
@@ -92,6 +107,73 @@ class HandMidiTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertTrue(output.with_suffix('.mid').is_file())
             self.assertTrue(output.with_name('result_hands.mid').is_file())
+
+    def test_aligned_score_and_midi_use_same_neural_hands_and_tempo_map(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(audio_path, model, target, *args):
+                fixture(Path(str(target) + '.mid'))
+            beats = [1, 1.5, 2.1, 2.6, 3.2, 3.8, 4.4, 5, 5.6]
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.beat_alignment.detect', return_value=(beats, [1, 3.2, 5.6])) as detect, \
+                 patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]) as neural:
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output), '--model-path', 'Piano',
+                    '--score', '--split-hands', '--align-bars', '--neural-staff', '--score-key', 'Bb'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            detect.assert_called_once()
+            neural.assert_called_once()
+            midi = mido.MidiFile(output.with_name('result_hands.mid'))
+            self.assertEqual([m.note for m in midi.tracks[-2] if m.type == 'note_on' and m.velocity], [72])
+            self.assertEqual([m.note for m in midi.tracks[-1] if m.type == 'note_on' and m.velocity], [48])
+            self.assertTrue(any(m.type == 'set_tempo' and abs(m.tempo - 600000) <= 1 for m in midi.tracks[0]))
+            self.assertEqual([m.key for m in midi.tracks[0] if m.type == 'key_signature'], ['Bb'])
+            self.assertEqual([(m.numerator, m.denominator) for m in midi.tracks[0] if m.type == 'time_signature'], [(4, 4)])
+            for track in midi.tracks[-2:]:
+                self.assertTrue(all(tick % 120 == 0 for tick, msg in absolute(track) if msg.type in ('note_on', 'note_off')))
+            xml = ET.parse(output.with_suffix('.musicxml'))
+            staff_by_pitch = {int(n.findtext('pitch/octave')) * 12 + {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}[n.findtext('pitch/step')] + 12:
+                              int(n.findtext('staff')) for n in xml.findall('.//note[pitch]')}
+            self.assertEqual((staff_by_pitch[72], staff_by_pitch[48]), (1, 2))
+
+    def test_alignment_failure_does_not_silently_export_unaligned_midi(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(audio_path, model, target, *args):
+                fixture(Path(str(target) + '.mid'))
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.beat_alignment.detect', side_effect=RuntimeError('tracker failed')):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output), '--model-path', 'Piano',
+                                                               '--split-hands', '--align-bars'])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn('audio bar alignment failed', result.output)
+            self.assertTrue(output.with_suffix('.mid').is_file())
+            self.assertFalse(output.with_name('result_hands.mid').exists())
+
+    def test_simplified_score_and_final_midi_omit_same_notes(self):
+        with TemporaryDirectory() as folder:
+            source, target, score = (Path(folder) / name for name in ('input.mid', 'hands.mid', 'score.musicxml'))
+            midi = mido.MidiFile(ticks_per_beat=480)
+            track = mido.MidiTrack()
+            for pitch in range(48, 60):
+                track.append(mido.Message('note_on', note=pitch, velocity=80))
+            for pitch in range(48, 60):
+                track.append(mido.Message('note_off', note=pitch, time=480 if pitch == 48 else 0))
+            midi.tracks.append(track)
+            midi.save(source)
+            analysis = {}
+            export_score(source, score, tempo=120, simplify=True, analysis_out=analysis)
+            analysis['grid'] = BeatGrid([0, .5, 1, 1.5], [0], tempo=120, downbeat=0)
+            analysis['quantize'] = True
+            split_piano_midi(source, target, analysis)
+            written = mido.MidiFile(target)
+            midi_pitches = sorted(msg.note for track in written.tracks for msg in track if msg.type == 'note_on' and msg.velocity)
+            xml = ET.parse(score)
+            xml_notes = xml.findall('.//note[pitch]')
+            self.assertLess(len(midi_pitches), 12)
+            self.assertEqual(len(midi_pitches), len(xml_notes))
+            self.assertEqual(len([msg for msg in mido.MidiFile(source).tracks[0] if msg.type == 'note_on' and msg.velocity]), 12)
 
 
 if __name__ == '__main__':

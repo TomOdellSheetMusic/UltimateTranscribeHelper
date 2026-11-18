@@ -462,10 +462,10 @@ def _mark_tuplets(events):
                 notations = _element(note, 'notations')
             _element(notations, 'tuplet', type=typ)
 
-def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto'):
+def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False):
     """Write a beat-aligned MusicXML draft with independent voices and stable clefs."""
     destination = Path(destination)
-    if destination.exists():
+    if not analysis_only and destination.exists():
         raise FileExistsError(f'Refusing to overwrite existing score: {destination}')
     notes, programs, names, signature, fallback = _read_midi(source)
     percussion = [key for key in notes if key[1] == 9]
@@ -551,8 +551,8 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
     groups = []
     for number, (key, entries) in enumerate(sorted(notes.items()), 1):
         is_piano = piano and len(notes) == 1
-        quantized = []
-        for start, end, pitch, velocity in entries:
+        indexed = []
+        for note_index, (start, end, pitch, velocity) in enumerate(entries):
             if triplets:
                 onset = quantize(beat_position(start), triplets)
                 offset = quantize(beat_position(end), triplets)
@@ -561,7 +561,10 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             else:
                 onset = grid.unit(start) if grid else max(0, round(start * bpm / 60 * 4))
                 offset = max(onset + 1, grid.unit(end) if grid else round(end * bpm / 60 * 4))
-            quantized.append((onset, offset, pitch, velocity))
+            indexed.append(((onset, offset, pitch, velocity), note_index))
+        if neural_staff:
+            indexed.sort()
+        quantized = [note for note, _ in indexed]
         if simplify and not is_piano and len(_voices(quantized)) > 4:
             quantized, dropped = _simplify_to_voices(quantized)
             if dropped:
@@ -571,13 +574,38 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         preferences = None
         if neural_staff:
             from omnizart.desktop.svsep import predict_staff
-            quantized.sort()
             prediction_notes = [(round(start / unit_scale), max(round(start / unit_scale) + 1, round(end / unit_scale)), pitch, velocity)
                                 for start, end, pitch, velocity in quantized]
             preferences = predict_staff(prediction_notes, original_length, denominator)
         staff_notes = _assign_piano_hands(quantized, length, preferences, unit_scale) if is_piano else {1: quantized}
+        if analysis_out is not None and is_piano:
+            indices = defaultdict(deque)
+            for note, index in indexed:
+                indices[note].append(index)
+            hands = [None] * len(entries)
+            positions = [None] * len(entries)
+            for note, index in indexed:
+                positions[index] = (note[0] / (4 * unit_scale), note[1] / (4 * unit_scale))
+            for staff, assigned in staff_notes.items():
+                for note in assigned:
+                    hands[indices[note].popleft()] = staff
+            analysis_out.update(hands=hands, positions=positions, grid=grid, tempo=bpm, meter=(numerator, denominator), key=score_key)
         if simplify and is_piano:
             staff_notes = _simplify_piano_hands(staff_notes, length)
+            if analysis_out is not None:
+                available = defaultdict(list)
+                for note, index in indexed:
+                    available[(hands[index], note[0], note[2], note[3])].append((note, index))
+                simplified_hands = [None] * len(entries)
+                simplified_positions = [None] * len(entries)
+                for staff, assigned in staff_notes.items():
+                    for note in assigned:
+                        candidates = available[(staff, note[0], note[2], note[3])]
+                        match = next((i for i, (original, _) in enumerate(candidates) if original == note), 0)
+                        _, index = candidates.pop(match)
+                        simplified_hands[index] = staff
+                        simplified_positions[index] = (note[0] / (4 * unit_scale), note[1] / (4 * unit_scale))
+                analysis_out.update(hands=simplified_hands, positions=simplified_positions, simplified=True)
         score_part = _element(parts, 'score-part', id=f'P{number}')
         _element(score_part, 'part-name', names.get(key[0]) or ('Piano' if is_piano else f'Instrument {number}'))
         inst = _element(score_part, 'score-instrument', id=f'I{number}')
@@ -586,6 +614,10 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         _element(midi_inst, 'midi-channel', key[1] + 1)
         _element(midi_inst, 'midi-program', programs[key] + 1)
         groups.append((number, staff_notes, is_piano))
+    if analysis_only:
+        if analysis_out is not None and 'hands' not in analysis_out:
+            raise ValueError('Hand-track export requires one piano instrument track.')
+        return bpm
     for number, staff_notes, is_piano in groups:
         part = _element(score, 'part', id=f'P{number}')
         lanes = _piano_voices(staff_notes) if is_piano else {staff: _voices(entries) for staff, entries in staff_notes.items()}

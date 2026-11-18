@@ -77,6 +77,11 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
     if piano_only and separate_stem:
         raise click.UsageError('Choose either --piano-only or --separate-stem.')
     selected_stem = 'piano' if piano_only else (separate_stem.lower() if separate_stem else None)
+    piano_output = (input_is_piano or selected_stem == 'piano' or model_path in
+                    ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
+    if neural_staff or (piano_output and (align_bars or simplify_score or score_tempo is not None or
+                                         score_key != 'Auto' or score_meter is not None or score_downbeat is not None)):
+        split_hands = True
     if selected_stem and not re.fullmatch(r'[a-z0-9_-]+', selected_stem):
         raise click.UsageError('The selected stem name must contain only letters, digits, underscores or hyphens.')
     if save_separated_stem and not selected_stem:
@@ -201,50 +206,72 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 target = Path(str(target) + ".mid")
         elif target.suffix.lower() not in (".mid", ".midi"):
             target = Path(str(target) + ".mid")
-    hand_error = None
-    if split_hands:
-        from omnizart.desktop.hand_midi import split_piano_midi
-        hands_path = target.with_name(target.stem + '_hands.mid')
+    if smooth_notes or remove_short_ms or lint_notes or score or musescore or compare_midi or split_hands:
+        original_target = target
+    if smooth_notes or remove_short_ms:
+        from omnizart.desktop.smoothing import smooth_midi
+        cleaned = target.with_name(target.stem + '_smoothed.mid')
         try:
-            right, left = split_piano_midi(target, hands_path)
+            merged = smooth_midi(target, cleaned, smooth_gap_ms, remove_short_ms, join_notes=smooth_notes)
         except (OSError, ValueError) as exc:
-            hand_error = str(exc)
-            click.echo(f'Hand-track export failed: {exc}', err=True)
-        else:
-            click.echo(f'Hand-track MIDI saved to {hands_path} (right: {right}, left: {left}). Review the assignments.')
+            raise click.ClickException(f'Original MIDI was saved, but smoothing failed: {exc}') from exc
+        click.echo(f'Cleaned MIDI saved to {cleaned} ({merged} fragments joined). Original preserved.')
+        target = cleaned
     if compare_midi:
         from omnizart.desktop.compare import write_comparison
-        comparison = target.with_name(target.stem + "_comparison.txt")
+        comparison = original_target.with_name(original_target.stem + "_comparison.txt")
         try:
             count = write_comparison(target, compare_midi, comparison)
         except (OSError, ValueError, EOFError) as exc:
             raise click.ClickException(f"Original MIDI was saved, but comparison failed: {exc}") from exc
         click.echo(f"Comparison saved to {comparison} ({count} differences).")
-    if score:
+    analysis = {} if split_hands else None
+    if score or split_hands:
         from omnizart.desktop.notation import export_score
-        score_path = target.with_name(target.stem + ".musicxml")
+        score_path = original_target.with_name(original_target.stem + ".musicxml")
         try:
             score_options = dict(tempo=score_tempo, score_key=score_key, neural_staff=neural_staff,
                                audio=input_audio, align_bars=align_bars, downbeat=score_downbeat,
                                beats_per_bar=int(score_meter) if score_meter else None,
-                               piano=(input_is_piano or selected_stem == 'piano' or model_path in
+                               piano=(split_hands or input_is_piano or selected_stem == 'piano' or model_path in
                                       ("Piano", "PianoV2", "Transkun (piano)",
                                        "Transkun V2 Aug", "Pedal Piano")))
-            bpm = export_score(target, score_path, simplify=simplify_score and not score_options['piano'], **score_options)
-            click.echo(f"MusicXML draft saved to {score_path} ({bpm:g} BPM). Review its notation.")
-            if simplify_score and score_options['piano']:
-                simplified_path = target.with_name(target.stem + "_simplified.musicxml")
-                export_score(target, simplified_path, simplify=True, **score_options)
+            bpm = export_score(target, score_path, simplify=simplify_score and (not score_options['piano'] or not score),
+                               analysis_out=analysis, analysis_only=not score, **score_options)
+            if score:
+                click.echo(f"MusicXML draft saved to {score_path} ({bpm:g} BPM). Review its notation.")
+            if score and simplify_score and score_options['piano']:
+                simplified_path = original_target.with_name(original_target.stem + "_simplified.musicxml")
+                export_score(target, simplified_path, simplify=True, analysis_out=analysis, **score_options)
                 click.echo(f"Simplified MusicXML saved to {simplified_path}. Review omitted notes and playability.")
-            if musescore:
+            if score and musescore:
                 from omnizart.desktop.score_export import _run_musescore
-                pdf = target.with_name(target.stem + ".pdf")
+                pdf = original_target.with_name(original_target.stem + ".pdf")
                 if pdf.exists():
                     raise FileExistsError(f"Refusing to overwrite existing PDF: {pdf}")
                 _run_musescore(musescore, score_path, pdf)
                 click.echo(f"PDF saved to {pdf}.")
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            raise click.ClickException(f"Original MIDI was saved, but score export failed: {exc}") from exc
+            raise click.ClickException(f"Original MIDI was saved, but score or hand analysis failed: {exc}") from exc
+        if split_hands:
+            if not analysis.get('hands'):
+                raise click.ClickException('Original MIDI was saved, but hand splitting requires one piano instrument.')
+            if align_bars and analysis.get('grid') is None:
+                raise click.ClickException('Original MIDI was saved, but audio bar alignment failed; no aligned hand MIDI was created.')
+            if analysis.get('grid') is None and (score or score_tempo is not None or simplify_score):
+                from omnizart.desktop.beat_grid import BeatGrid
+                bpm = analysis['tempo']
+                period = 60 / bpm
+                analysis['grid'] = BeatGrid([i * period for i in range(4)], [0], tempo=bpm, downbeat=0)
+            analysis['quantize'] = bool(score or align_bars or score_downbeat is not None or simplify_score)
+            analysis['apply_meter'] = score_meter is not None
+            from omnizart.desktop.hand_midi import split_piano_midi
+            hands_path = original_target.with_name(original_target.stem + '_hands.mid')
+            try:
+                right, left = split_piano_midi(target, hands_path, analysis=analysis)
+            except (OSError, ValueError) as exc:
+                raise click.ClickException(f'Original MIDI was saved, but hand-track export failed: {exc}') from exc
+            click.echo(f'Hand-track MIDI saved to {hands_path} (right: {right}, left: {left}). Review the assignments.')
     elif musescore:
         from omnizart.desktop.score_export import export_formatted_score
         score_path = target.with_name(target.stem + ".musicxml")
@@ -260,22 +287,12 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         click.echo(f"Formatted MusicXML saved to {score_path}; print-ready PDF saved to {pdf}. Review the score before use.")
     if lint_notes:
         from omnizart.desktop.lint import write_report
-        report = target.with_name(target.stem + "_review.txt")
+        report = original_target.with_name(original_target.stem + "_review.txt")
         try:
             count = write_report(target, report)
         except (OSError, ValueError) as exc:
             raise click.ClickException(f"Original MIDI was saved, but review failed: {exc}") from exc
         click.echo(f"Review report saved to {report} ({count} suggestions).")
-    if smooth_notes or remove_short_ms:
-        from omnizart.desktop.smoothing import smooth_midi
-        cleaned = target.with_name(target.stem + "_smoothed.mid")
-        try:
-            merged = smooth_midi(target, cleaned, smooth_gap_ms, remove_short_ms, join_notes=smooth_notes)
-        except (OSError, ValueError) as exc:
-            raise click.ClickException(f"Original MIDI was saved, but smoothing failed: {exc}") from exc
-        click.echo(f"Cleaned MIDI saved to {cleaned} ({merged} fragments joined). Original preserved.")
-    if hand_error:
-        raise click.ClickException(f'Original MIDI was saved, but hand-track export failed: {hand_error}')
 
 
 def _midi_target(output, original_audio):

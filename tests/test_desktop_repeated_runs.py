@@ -11,6 +11,44 @@ from omnizart.desktop.app import Application
 
 
 class RepeatedRunsTests(unittest.TestCase):
+    def setUp(self):
+        preferences = patch('omnizart.desktop.app.read_preferences', return_value={})
+        save = patch.object(Application, 'save_preferences')
+        preferences.start()
+        save.start()
+        self.addCleanup(preferences.stop)
+        self.addCleanup(save.stop)
+
+    def test_neural_and_alignment_produce_final_midi_without_musicxml(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread:
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.music_model.set('Piano')
+                    app.mode_changed()
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.neural_staff.set(True)
+                    app.align_bars.set(True)
+                    app.musescore_export.set(False)
+                    app.split_hands.set(False)
+                    app.start()
+                    command = thread.call_args.kwargs['args'][0]
+                    self.assertIn('--neural-staff', command)
+                    self.assertIn('--align-bars', command)
+                    self.assertIn('--split-hands', command)
+                    self.assertNotIn('--score', command)
+                    app.output_lock.unlink()
+                finally:
+                    root.destroy()
+
     def test_result_rows_have_aligned_headings_and_independent_folder_buttons(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)
@@ -22,6 +60,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root = tk.Tk()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.destination.set(str(folder))
                     app.running = True  # Keep both jobs waiting while their rows are arranged.
                     app.enqueue_files([first, second])
@@ -55,9 +96,13 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.destination.set(str(folder))
                     app.source.set(str(audio))
                     app.split_hands.set(True)
+                    app.align_bars.set(False)
                     app.start()
                     command = thread.call_args.kwargs['args'][0]
                     self.assertIn('--split-hands', command)
@@ -85,6 +130,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     self.assertTrue(root.tk.call('package', 'provide', 'tkdnd'))
                     self.assertEqual(app.drop_input(SimpleNamespace(data='{' + str(audio) + '}')), 'copy')
                     self.assertEqual(app.source.get(), str(audio))
@@ -122,6 +170,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.destination.set(str(folder))
                     app.source.set(str(first))
                     app.music_model.set('Piano')
@@ -175,6 +226,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.destination.set(str(folder))
                     event = SimpleNamespace(data='{' + str(first) + '} {' + str(second) + '}')
                     self.assertEqual(app.drop_input(event), 'copy')
@@ -201,6 +255,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.destination.set(str(folder))
                     app.source.set(str(first))
                     app.music_model.set('YourMT3')
@@ -233,6 +290,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.source.set(str(audio))
                     app.destination.set(str(folder))
                     app.stem_model.set('pymss model')
@@ -287,6 +347,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     for _ in models:
                         app.import_model()
                     self.assertEqual(set(app.custom_models.values()), {str(p) for p in models})
@@ -326,6 +389,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.remove_vocals.set(True)
                     app.separator_model.set("UVR Vocal FT (CPU)")
                     app.use_gpu.set(True)
@@ -350,6 +416,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.source.set(str(audio))
                     app.destination.set(str(folder))
                     app.music_model.set("Transkun V2 Aug")
@@ -378,6 +447,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.source.set(str(audio))
                     app.destination.set(str(folder))
                     app.mode.set("Separate stems (audio)")
@@ -409,6 +481,9 @@ class RepeatedRunsTests(unittest.TestCase):
                 root.withdraw()
                 try:
                     app = Application(root)
+                    app.music_model.set("Piano")
+                    app.mode_changed()
+                    app.align_bars.set(False)
                     app.source.set(str(audio))
                     app.destination.set(str(folder))
                     app.start()

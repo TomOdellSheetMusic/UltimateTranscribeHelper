@@ -559,20 +559,20 @@ class Application(ttk.Frame):
         self.compare_button.grid(row=18, column=1, sticky="w", padx=(14, 0), pady=(10, 0))
         Tooltip(self.compare_option, "Lists pitch and onset differences from another MIDI made from the same audio. Does not prove which is correct.")
 
-        self.score_grid_label = ttk.Label(card, text="Score tempo (BPM or Auto)", style="CardLabel.TLabel")
+        self.score_grid_label = ttk.Label(card, text="MIDI / score tempo (BPM or Auto)", style="CardLabel.TLabel")
         self.score_grid_label.grid(row=19, column=0, sticky="w", pady=(10, 0))
         self.score_grid_picker = ttk.Entry(card, textvariable=self.score_tempo, style="App.TEntry", width=8)
         self.score_grid_picker.grid(row=19, column=1, sticky="w", padx=(14, 0), pady=(10, 0))
         Tooltip(self.score_grid_picker, "Auto estimates tempo from the notes. Enter a BPM to override it. Clear triplet patterns may use a triplet grid; other notes use sixteenths.")
-        self.score_simplify_option = ttk.Checkbutton(card, text="Simplify score when needed", variable=self.simplify_score, style="App.TCheckbutton")
+        self.score_simplify_option = ttk.Checkbutton(card, text="Simplify MIDI and score when needed", variable=self.simplify_score, style="App.TCheckbutton")
         self.score_simplify_option.grid(row=20, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        Tooltip(self.score_simplify_option, "For piano, creates a separate simplified MusicXML score. Held notes may be shortened and other notes omitted; the original MIDI is preserved.")
+        Tooltip(self.score_simplify_option, "Simplifies the final hand MIDI and optional score. Held notes may be shortened and other notes omitted; the original transcription is preserved.")
         self.neural_staff_option = ttk.Checkbutton(card, text="Experimental: neural piano hand assignment", variable=self.neural_staff, style="App.TCheckbutton")
         self.neural_staff_option.grid(row=21, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        Tooltip(self.neural_staff_option, "Uses Piano SVSep on CPU to suggest piano staves, balanced with hand reach. First use installs dependencies and downloads its model. Results still require review.")
+        Tooltip(self.neural_staff_option, "Uses Piano SVSep on CPU for the final MIDI hand tracks and optional score, balanced with hand reach. First use installs the model. Results still require review.")
         self.align_bars_option = ttk.Checkbutton(card, text="Align bars to audio beats", variable=self.align_bars, style="App.TCheckbutton")
         self.align_bars_option.grid(row=22, column=0, sticky="w", pady=(10, 0))
-        Tooltip(self.align_bars_option, "Detects beats and downbeats from the audio using Beat This. First use installs the model. Timing is an estimate and may need correction.")
+        Tooltip(self.align_bars_option, "Detects beats and downbeats using Beat This. The final piano MIDI and optional score share the beat grid. First use installs the model; review the result.")
         self.downbeat_frame = ttk.Frame(card, style="Card.TFrame")
         self.downbeat_frame.grid(row=22, column=1, sticky="w", padx=(14, 0), pady=(10, 0))
         ttk.Label(self.downbeat_frame, text="First bar line (seconds)", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
@@ -587,7 +587,7 @@ class Application(ttk.Frame):
         Tooltip(self.meter_picker, "Override the detected meter when you know the recording has three or four beats per bar.")
         key_frame = ttk.Frame(card, style="Card.TFrame")
         key_frame.grid(row=24, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        ttk.Label(key_frame, text="Score key", style="CardLabel.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(key_frame, text="MIDI / score key", style="CardLabel.TLabel").pack(side="left", padx=(0, 8))
         from omnizart.desktop.score_key import KEYS
         key_picker = ttk.Combobox(key_frame, textvariable=self.score_key, values=["Auto", *KEYS], state="readonly", width=7)
         key_picker.pack(side="left")
@@ -711,6 +711,8 @@ class Application(ttk.Frame):
 
     def save_preferences(self, *_args):
         """Persist user-selected interface settings between launches."""
+        if getattr(self, '_applying_job_snapshot', False):
+            return
         data = {name: variable.get() for name, variable in self._preference_variables.items()}
         data["thresholds"] = {key: variable.get() for key, variable in self.thresholds.items()}
         settings = preferences_path()
@@ -947,6 +949,7 @@ class Application(ttk.Frame):
                 self.update_separation_controls()
             elif mode == 'hands':
                 self.description.set('Choose a piano MIDI to create separate left- and right-hand tracks. The source remains unchanged.')
+                self.neural_staff_option.configure(state='normal')
 
     def toggle_advanced(self):
         self.advanced_open = not self.advanced_open
@@ -1035,10 +1038,14 @@ class Application(ttk.Frame):
         return {'variables': variables, 'thresholds': {key: value.get() for key, value in self.thresholds.items()}}
 
     def _apply_snapshot(self, snapshot):
-        for name, value in snapshot['variables'].items():
-            getattr(self, name).set(value)
-        for key, value in snapshot['thresholds'].items():
-            self.thresholds[key].set(value)
+        self._applying_job_snapshot = True
+        try:
+            for name, value in snapshot['variables'].items():
+                getattr(self, name).set(value)
+            for key, value in snapshot['thresholds'].items():
+                self.thresholds[key].set(value)
+        finally:
+            self._applying_job_snapshot = False
 
     def enqueue_current(self):
         source = Path(self.source.get()).expanduser()
@@ -1671,6 +1678,12 @@ class Application(ttk.Frame):
             messagebox.showerror("Input file", "This task requires a MIDI file.")
             return
         selected_model = self.music_model.get()
+        piano_selected = (self.input_is_piano.get() or (self.piano_only.get() and self.stem_choice.get().strip().lower() == 'piano') or
+                          selected_model in ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
+        final_hands = self.split_hands.get() or (piano_selected and (
+            self.neural_staff.get() or self.align_bars.get() or self.simplify_score.get() or
+            self.score_tempo.get().strip().lower() != 'auto' or self.score_key.get() != 'Auto' or
+            self.score_meter.get() != 'Auto' or self.score_downbeat.get().strip().lower() != 'auto'))
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)
         if mode == "music" and self.input_is_piano.get() and (self.piano_only.get() or self.remove_vocals.get() or self.include_vocals.get()):
             messagebox.showerror("Piano input", "Already-isolated piano cannot be combined with separation or a vocal track. Turn those options off.")
@@ -1701,8 +1714,8 @@ class Application(ttk.Frame):
                 if model_checkpoint() is None:
                     messagebox.showerror("MuScriptor model", f"Download the small model from its Hugging Face page and place exactly one .safetensors file and its config.json here:\n\n{model_folder()}")
                     return
-        if mode == "music" and self.musescore_export.get() and self.neural_staff.get():
-            if not (self.input_is_piano.get() or (self.piano_only.get() and self.stem_choice.get().strip().lower() == 'piano') or selected_model in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano")):
+        if ((mode == "music" and (self.musescore_export.get() or final_hands)) or mode == 'hands') and self.neural_staff.get():
+            if mode == 'music' and not piano_selected:
                 messagebox.showerror("Neural piano score", "Select a piano model, isolate piano, or mark the input as already piano only.")
                 return
             from omnizart.desktop.optional_models import install, ready
@@ -1722,7 +1735,7 @@ class Application(ttk.Frame):
 
                 threading.Thread(target=install_score_model, daemon=True).start()
                 return
-        if mode == "music" and self.musescore_export.get() and self.align_bars.get():
+        if mode == "music" and (self.musescore_export.get() or final_hands) and self.align_bars.get():
             from omnizart.desktop.optional_models import install, ready
             if not ready("Beat This"):
                 if self.optional_installing:
@@ -1839,7 +1852,7 @@ class Application(ttk.Frame):
             messagebox.showerror("MIDI comparison", "Choose an existing MIDI to compare first.")
             return
         score_tempo = self.score_tempo.get().strip()
-        if mode == "music" and self.musescore_export.get() and score_tempo.lower() != "auto":
+        if mode == "music" and (self.musescore_export.get() or final_hands) and score_tempo.lower() != "auto":
             try:
                 bpm = float(score_tempo)
                 if not math.isfinite(bpm) or not 30 <= bpm <= 300:
@@ -1848,7 +1861,7 @@ class Application(ttk.Frame):
                 messagebox.showerror("Score tempo", "Enter Auto or a tempo between 30 and 300 BPM.")
                 return
         score_downbeat = self.score_downbeat.get().strip()
-        if mode == "music" and self.musescore_export.get() and score_downbeat.lower() != "auto":
+        if mode == "music" and (self.musescore_export.get() or final_hands) and score_downbeat.lower() != "auto":
             try:
                 value = float(score_downbeat)
                 if not math.isfinite(value) or value < 0:
@@ -1871,7 +1884,7 @@ class Application(ttk.Frame):
         if mode == "music":
             model = imported_path if imported_path is not None else self.music_model.get()
             cmd.extend(["--model-path", model, *options])
-            if self.split_hands.get():
+            if final_hands:
                 cmd.append('--split-hands')
             if self.piano_only.get():
                 selected_stem = self.stem_choice.get().strip().lower()
@@ -1894,6 +1907,7 @@ class Application(ttk.Frame):
                 cmd.extend(["--compare-midi", self.compare_path.get()])
             if self.musescore_export.get():
                 cmd.append("--score")
+            if self.musescore_export.get() or final_hands:
                 if self.align_bars.get():
                     cmd.append("--align-bars")
                 if score_downbeat.lower() != "auto":
@@ -1908,7 +1922,7 @@ class Application(ttk.Frame):
                     cmd.extend(["--score-key", self.score_key.get()])
                 if score_tempo.lower() != "auto":
                     cmd.extend(["--score-tempo", score_tempo])
-                if self.pdf_export.get():
+                if self.musescore_export.get() and self.pdf_export.get():
                     cmd.extend(["--musescore", self.musescore_path.get()])
             if self.lint_notes.get():
                 cmd.append("--lint-notes")
@@ -1938,6 +1952,8 @@ class Application(ttk.Frame):
                             '--pymss-source', self.pymss_source.get()])
             if self.stem_choice.get() != "All":
                 cmd.extend(["--stem", self.stem_choice.get().lower()])
+        elif mode == 'hands' and self.neural_staff.get():
+            cmd.append('--neural-staff')
         self.active_stems = (None if mode == 'stems' and self.stem_model.get() == 'pymss model' and self.stem_choice.get() == 'All' else
                              (self.stem_choice.get().lower(),) if mode == "stems" and self.stem_choice.get() != "All"
                              else ("drums", "bass", "other", "vocals", "guitar", "piano"))
