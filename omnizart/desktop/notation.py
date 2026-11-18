@@ -449,7 +449,11 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
     # BeatGrid extrapolates the bar containing audio time zero.  If that bar
     # starts before the recording, represent only its audible tail as an
     # implicit pickup rather than inserting silence before time zero.
-    first_left = min(length - 1, grid.unit(0) % length) if grid else 0
+    if grid and grid.unit(0) >= length:
+        # Rounding can put audio time zero on the following downbeat; do not
+        # create a whole silent bar when that happens.
+        grid.origin += grid.meter
+    first_left = grid.unit(0) if grid else 0
     score = ET.Element('score-partwise', version='4.0')
     work = _element(score, 'work')
     _element(work, 'work-title', Path(source).stem)

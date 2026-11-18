@@ -33,6 +33,18 @@ class TestKeyAwarePitchSpelling(unittest.TestCase):
 
 
 class NativeScoreTests(unittest.TestCase):
+    def test_downbeat_just_after_audio_start_does_not_create_empty_bar(self):
+        with TemporaryDirectory() as directory:
+            path, output = Path(directory) / 'input.mid', Path(directory) / 'score.musicxml'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([
+                mido.Message('note_on', note=60, velocity=80, time=10),
+                mido.Message('note_off', note=60, time=480)]))
+            midi.save(path)
+            export_score(path, output, tempo=120, downbeat=.01, score_key='C')
+            measures = ET.parse(output).findall('.//part/measure')
+            self.assertIsNotNone(measures[0].find('.//note/pitch'))
+
     def test_partial_opening_measure_preserves_audio_start_time(self):
         with TemporaryDirectory() as directory:
             path, output = Path(directory) / 'input.mid', Path(directory) / 'score.musicxml'
