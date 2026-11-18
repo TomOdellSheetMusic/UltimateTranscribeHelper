@@ -265,6 +265,7 @@ class Application(ttk.Frame):
         self.remove_vocals = tk.BooleanVar(value=False)
         self.piano_only = tk.BooleanVar(value=False)
         self.input_is_piano = tk.BooleanVar(value=False)
+        self.save_separated_stem = tk.BooleanVar(value=False)
         self.include_vocals = tk.BooleanVar(value=False)
         self.separator_model = tk.StringVar(value="UVR MDX (recommended)")
         self.stem_model = tk.StringVar(value="Built-in six-stem")
@@ -378,11 +379,11 @@ class Application(ttk.Frame):
         self.keep_option.grid(row=8, column=1, sticky="w", padx=(14, 0), pady=(16, 0))
         Tooltip(self.separation_option, "Uses the included CPU model to separate vocals. It can help with piano and voice, "
                 "but can also remove some instruments or introduce artifacts. Compare both results.")
-        self.piano_only_option = ttk.Checkbutton(card, text="Isolate piano before transcribing",
+        self.piano_only_option = ttk.Checkbutton(card, text="Separate a stem before transcribing",
                                                 variable=self.piano_only, style="App.TCheckbutton",
                                                 command=self.update_separation_controls)
         self.piano_only_option.grid(row=9, column=0, sticky="w", pady=(4, 0))
-        Tooltip(self.piano_only_option, "Runs the selected separation model, then transcribes its piano stem. "
+        Tooltip(self.piano_only_option, "Runs the selected separation model, then transcribes the chosen stem. "
                 "Select a six-stem or pymss model below. Separation can introduce artifacts.")
         self.input_piano_option = ttk.Checkbutton(card, text="Input is already piano only",
                                                   variable=self.input_is_piano, style="App.TCheckbutton")
@@ -470,7 +471,7 @@ class Application(ttk.Frame):
         self.score_grid_label.grid(row=19, column=0, sticky="w", pady=(10, 0))
         self.score_grid_picker = ttk.Entry(card, textvariable=self.score_tempo, style="App.TEntry", width=8)
         self.score_grid_picker.grid(row=19, column=1, sticky="w", padx=(14, 0), pady=(10, 0))
-        Tooltip(self.score_grid_picker, "Auto estimates tempo from the notes. Enter a BPM to override it; notation uses a sixteenth-note grid.")
+        Tooltip(self.score_grid_picker, "Auto estimates tempo from the notes. Enter a BPM to override it. Clear triplet patterns may use a triplet grid; other notes use sixteenths.")
         self.score_simplify_option = ttk.Checkbutton(card, text="Simplify score when needed", variable=self.simplify_score, style="App.TCheckbutton")
         self.score_simplify_option.grid(row=20, column=0, columnspan=2, sticky="w", pady=(10, 0))
         Tooltip(self.score_simplify_option, "For piano, creates a separate simplified MusicXML score. For other instruments, simplifies the score if necessary. Notes may be omitted; the original MIDI is preserved.")
@@ -511,16 +512,20 @@ class Application(ttk.Frame):
         self.custom_stem_button.pack(side="left", padx=(0, 8))
         self.pymss_button = ttk.Button(self.stem_settings, text="Browse pymss models...", style="Link.TButton", command=self.show_pymss_models)
         self.pymss_button.pack(side="left", padx=(0, 8))
-        ttk.Label(self.stem_settings, text="Save", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
+        ttk.Label(self.stem_settings, text="Stem", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
         self.stem_choice_picker = ttk.Combobox(self.stem_settings, textvariable=self.stem_choice,
             values=["All", "Piano", "Vocals", "Drums", "Bass", "Guitar", "Other", "Instrumental", "Accompaniment"], state="readonly", width=13)
         self.stem_choice_picker.pack(side="left")
         Tooltip(self.custom_stem_button, "Choose a six-stem ONNX model with the same mix/stems interface and output order as the built-in HT-Demucs model. Other architectures are not supported.")
-        Tooltip(self.stem_choice_picker, "Choose which output to save. For pymss you may type another stem name; All saves every output. Models may still compute unselected stems.")
+        Tooltip(self.stem_choice_picker, "Choose the stem to transcribe or save. For pymss you may type another stem name; All is available in standalone separation. Models may still compute unselected stems.")
         self.pymss_selected_label = ttk.Label(card, textvariable=self.pymss_model, style="CardHint.TLabel")
-        self.pymss_selected_label.grid(row=26, column=0, columnspan=2, sticky='w')
+        self.pymss_selected_label.grid(row=26, column=0, sticky='w')
+        self.save_stem_option = ttk.Checkbutton(card, text='Keep separated WAV', variable=self.save_separated_stem, style='App.TCheckbutton')
+        self.save_stem_option.grid(row=26, column=1, sticky='w', padx=(14, 0))
+        Tooltip(self.save_stem_option, 'Save a copy of the selected stem next to the MIDI. If off, the temporary stem is removed after transcription.')
         self.stem_settings.grid_remove()
         self.pymss_selected_label.grid_remove()
+        self.save_stem_option.grid_remove()
 
         self.settings_card = ttk.Frame(body, style="Card.TFrame", padding=(22, 12))
         self.settings_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
@@ -769,11 +774,16 @@ class Application(ttk.Frame):
         if music_piano:
             self.stem_settings.grid()
             self.pymss_selected_label.grid()
+            self.save_stem_option.grid()
+            if self.stem_choice.get() == 'All':
+                self.stem_choice.set('Piano')
         elif self.mode.get() != 'Separate stems (audio)':
             self.stem_settings.grid_remove()
             self.pymss_selected_label.grid_remove()
-        self.stem_choice_picker.configure(state='disabled' if music_piano else
-                                          'normal' if self.stem_model.get() == 'pymss model' else 'readonly')
+            self.save_stem_option.grid_remove()
+        else:
+            self.save_stem_option.grid_remove()
+        self.stem_choice_picker.configure(state='normal' if self.stem_model.get() == 'pymss model' else 'readonly')
         choices = ['All', 'Piano', 'Vocals', 'Drums', 'Bass', 'Guitar', 'Other']
         if self.stem_model.get() == 'pymss model':
             choices += ['Instrumental', 'Accompaniment']
@@ -1294,6 +1304,9 @@ class Application(ttk.Frame):
         if mode == "music" and self.input_is_piano.get() and (self.piano_only.get() or self.remove_vocals.get() or self.include_vocals.get()):
             messagebox.showerror("Piano input", "Already-isolated piano cannot be combined with separation or a vocal track. Turn those options off.")
             return
+        if mode == 'music' and self.piano_only.get() and self.stem_choice.get().strip().lower() in ('', 'all'):
+            messagebox.showerror('Stem selection', 'Choose one stem to transcribe.')
+            return
         if mode == "music" and selected_model in ("YourMT3", "MuScriptor"):
             from omnizart.desktop.optional_models import install, ready
             if not ready(selected_model):
@@ -1318,7 +1331,7 @@ class Application(ttk.Frame):
                     messagebox.showerror("MuScriptor model", f"Download the small model from its Hugging Face page and place exactly one .safetensors file and its config.json here:\n\n{model_folder()}")
                     return
         if mode == "music" and self.musescore_export.get() and self.neural_staff.get():
-            if not (self.input_is_piano.get() or self.piano_only.get() or selected_model in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano")):
+            if not (self.input_is_piano.get() or (self.piano_only.get() and self.stem_choice.get().strip().lower() == 'piano') or selected_model in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano")):
                 messagebox.showerror("Neural piano score", "Select a piano model, isolate piano, or mark the input as already piano only.")
                 return
             from omnizart.desktop.optional_models import install, ready
@@ -1473,7 +1486,13 @@ class Application(ttk.Frame):
             model = imported_path if imported_path is not None else self.music_model.get()
             cmd.extend(["--model-path", model, *options])
             if self.piano_only.get():
-                cmd.append("--piano-only")
+                selected_stem = self.stem_choice.get().strip().lower()
+                if selected_stem == 'piano':
+                    cmd.append('--piano-only')
+                else:
+                    cmd.extend(['--separate-stem', selected_stem])
+                if self.save_separated_stem.get():
+                    cmd.append('--save-separated-stem')
                 if self.stem_model.get() == 'pymss model':
                     cmd.extend(['--piano-separator', 'pymss', '--pymss-model', self.pymss_model.get().strip(),
                                 '--pymss-source', self.pymss_source.get()])

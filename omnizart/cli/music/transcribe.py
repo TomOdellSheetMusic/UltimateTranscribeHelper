@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import shutil
 import subprocess
+import re
 
 from omnizart.cli import silence_tensorflow
 from omnizart.cli.common_options import add_common_options, COMMON_TRANSCRIBE_OPTIONS
@@ -21,10 +22,12 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--frame-th", type=click.FloatRange(0, 1), default=None, help="Basic Pitch frame threshold.")
 @click.option("--minimum-note-ms", type=click.FloatRange(0, 2000), default=None, help="Basic Pitch minimum note length in milliseconds.")
 @click.option("--remove-vocals", is_flag=True, help="Separate vocals before instrument transcription.")
-@click.option("--piano-only", is_flag=True, help="Separate a piano stem before transcription (requires the six-stem model).")
+@click.option("--piano-only", is_flag=True, help="Separate a piano stem before transcription.")
+@click.option("--separate-stem", default=None, help="Separate the named stem and transcribe it immediately.")
+@click.option("--save-separated-stem", is_flag=True, help="Keep the selected separated audio as a WAV file.")
 @click.option("--input-is-piano", is_flag=True, help="Treat the input as already-isolated piano; do not run piano separation.")
-@click.option("--piano-separator", type=click.Choice(['six-stem', 'pymss']), default='six-stem', help="Backend for piano isolation.")
-@click.option("--pymss-model", default=None, help="pymss catalog or registered model for piano isolation.")
+@click.option("--piano-separator", type=click.Choice(['six-stem', 'pymss']), default='six-stem', help="Backend for stem separation.")
+@click.option("--pymss-model", default=None, help="pymss catalog or registered model for stem separation.")
 @click.option("--pymss-source", type=click.Choice(['huggingface', 'modelscope', 'hf-mirror']), default='huggingface')
 @click.option("--custom-stem-model", type=click.Path(exists=True, dir_okay=False), default=None, help="Compatible six-stem ONNX model.")
 @click.option("--save-accompaniment", is_flag=True, help="Keep the separated accompaniment WAV.")
@@ -48,7 +51,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--smooth-gap-ms", type=click.FloatRange(0, 200), default=30, help="Maximum gap to join, in milliseconds.")
 @click.option("--remove-short-ms", type=click.FloatRange(0, 200), default=0, help="Also remove notes shorter than this duration; 0 disables.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
-               remove_vocals, piano_only, input_is_piano, piano_separator, pymss_model, pymss_source, custom_stem_model,
+               remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, custom_stem_model,
                save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
                compare_midi, score_grid, score, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms):
     """Transcribe a single audio and output as a MIDI file.
@@ -69,15 +72,22 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         raise click.UsageError("--score-grid requires --musescore.")
     if save_accompaniment and not remove_vocals:
         raise click.UsageError("--save-accompaniment requires --remove-vocals.")
-    if piano_only and (remove_vocals or include_vocals):
-        raise click.UsageError("--piano-only cannot be combined with --remove-vocals or --include-vocals.")
-    if input_is_piano and (piano_only or remove_vocals or include_vocals):
+    if piano_only and separate_stem:
+        raise click.UsageError('Choose either --piano-only or --separate-stem.')
+    selected_stem = 'piano' if piano_only else (separate_stem.lower() if separate_stem else None)
+    if selected_stem and not re.fullmatch(r'[a-z0-9_-]+', selected_stem):
+        raise click.UsageError('The selected stem name must contain only letters, digits, underscores or hyphens.')
+    if save_separated_stem and not selected_stem:
+        raise click.UsageError('--save-separated-stem requires a selected stem.')
+    if selected_stem and (remove_vocals or include_vocals):
+        raise click.UsageError("Stem separation cannot be combined with --remove-vocals or --include-vocals.")
+    if input_is_piano and (selected_stem or remove_vocals or include_vocals):
         raise click.UsageError("--input-is-piano cannot be combined with audio separation or a vocal track.")
-    if piano_separator == 'pymss' and piano_only and (not pymss_model or custom_stem_model or uvr_device != 'cpu'):
-        raise click.UsageError('pymss piano isolation requires a model and uses its own CPU runtime.')
-    if piano_only and model_path in ("Pop", "Stream"):
+    if piano_separator == 'pymss' and selected_stem and (not pymss_model or custom_stem_model or uvr_device != 'cpu'):
+        raise click.UsageError('pymss separation requires a model and uses its own CPU runtime.')
+    if selected_stem == 'piano' and model_path in ("Pop", "Stream"):
         click.echo("Piano-only mode works best with a piano model; Pop and Stream may still produce non-piano notes.", err=True)
-    if uvr_device != "cpu" and not (piano_only or (separator == "uvr" and (remove_vocals or include_vocals))):
+    if uvr_device != "cpu" and not (selected_stem or (separator == "uvr" and (remove_vocals or include_vocals))):
         raise click.UsageError("DirectML requires piano-only or UVR vocal separation.")
     if model_path in ("Transkun (piano)", "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor"):
         if any(value is not None for value in (onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)):
@@ -89,24 +99,44 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             raise click.UsageError("Duration and instrument thresholds apply to Omnizart models only.")
     elif frame_th is not None or minimum_note_ms is not None:
         raise click.UsageError("Frame threshold and minimum note length apply to Basic Pitch only.")
-    if piano_only:
+    if selected_stem:
+        if save_separated_stem:
+            target = _midi_target(output, input_audio)
+            saved_stem = target.with_name(target.stem + '_' + selected_stem + '.wav')
+            if saved_stem.exists():
+                raise click.ClickException(f'Refusing to overwrite existing separated audio: {saved_stem}')
         with TemporaryDirectory(prefix="omnizart-piano-") as temporary:
             base = Path(temporary) / "separated"
             if piano_separator == 'pymss':
                 from omnizart.desktop.pymss_backend import separate as separate_pymss
-                separate_pymss(input_audio, base, pymss_model, selected_stems=['piano'], source_name=pymss_source)
+                separate_pymss(input_audio, base, pymss_model, selected_stems=[selected_stem], source_name=pymss_source)
             else:
                 from omnizart.desktop.six_stems import separate as separate_stems
                 options = dict(device=uvr_device, gpu_index=gpu_index)
+                if separate_stem:
+                    options['selected_stems'] = [selected_stem]
                 if custom_stem_model:
                     options['custom_model'] = custom_stem_model
                 separate_stems(input_audio, base, **options)
-            piano_audio = str(base.with_name(base.name + "_piano.wav"))
-            if model_path in ("YourMT3", "MuScriptor"):
-                _transcribe_piano_input(piano_audio, input_audio, model_path, output,
+            stem_audio = base.with_name(base.name + '_' + selected_stem + '.wav')
+            if save_separated_stem:
+                created = False
+                try:
+                    with stem_audio.open('rb') as inp, saved_stem.open('xb') as out:
+                        created = True
+                        shutil.copyfileobj(inp, out)
+                except FileExistsError as exc:
+                    raise click.ClickException(f'Refusing to overwrite existing separated audio: {saved_stem}') from exc
+                except OSError:
+                    if created:
+                        saved_stem.unlink(missing_ok=True)
+                    raise
+                click.echo(f'Separated audio saved to {saved_stem}.')
+            if selected_stem == 'piano' and model_path not in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano"):
+                _transcribe_piano_input(str(stem_audio), input_audio, model_path, output,
                                         onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
             else:
-                _transcribe(piano_audio, model_path, str(_midi_target(output, input_audio)),
+                _transcribe(str(stem_audio), model_path, str(_midi_target(output, input_audio)),
                             onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
     elif remove_vocals or include_vocals:
         from omnizart.desktop.separation import remove_vocals as separate, separate_stems
@@ -148,7 +178,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             else:
                 _transcribe(instrument_input, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
     else:
-        if input_is_piano and model_path not in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano"):
+        if (input_is_piano or selected_stem == 'piano') and model_path not in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano"):
             _transcribe_piano_input(input_audio, input_audio, model_path, output,
                                     onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
         else:
@@ -179,7 +209,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             score_options = dict(tempo=score_tempo, score_key=score_key, neural_staff=neural_staff,
                                audio=input_audio, align_bars=align_bars, downbeat=score_downbeat,
                                beats_per_bar=int(score_meter) if score_meter else None,
-                               piano=(input_is_piano or piano_only or model_path in
+                               piano=(input_is_piano or selected_stem == 'piano' or model_path in
                                       ("Piano", "PianoV2", "Transkun (piano)",
                                        "Transkun V2 Aug", "Pedal Piano")))
             bpm = export_score(target, score_path, simplify=simplify_score and not score_options['piano'], **score_options)
@@ -204,7 +234,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         try:
             export_formatted_score(target, score_path, pdf, musescore,
                                    0 if score_grid == "off" else int(score_grid),
-                                   piano_grand_staff=(input_is_piano or piano_only or model_path in
+                                   piano_grand_staff=(input_is_piano or selected_stem == 'piano' or model_path in
                                                       ("Piano", "PianoV2", "Transkun (piano)",
                                                        "Transkun V2 Aug", "Pedal Piano")))
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:

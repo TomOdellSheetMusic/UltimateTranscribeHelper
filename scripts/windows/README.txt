@@ -51,7 +51,8 @@ Optional "Create formatted MusicXML score" creates an editable score from
 MIDI without requiring MuseScore. Tempo is estimated automatically or can be
 entered manually. Audio bar alignment uses Beat This! to estimate beats and
 bar lines; its verified model downloads on first use. The first bar-line time
-can be entered manually. Choose MuseScore only if you also want a PDF. Score timing,
+can be entered manually. Clear triplet patterns can be written as triplets;
+other notes use a sixteenth grid. Choose MuseScore only if you also want a PDF. Score timing,
 voices and spelling are estimates; review the resulting notation. The original
 MIDI is not changed. Optional neural piano hand assignment installs the
 Piano SVSep code, its model checkpoint and dependencies on first use. The code
@@ -91,14 +92,16 @@ assignment with YourMT3 or MuScriptor. When a model predicts multiple instrument
 tracks from that input, the app saves its original multitrack MIDI and creates
 a separate single-piano MIDI for the score; predicted notes may still be wrong.
 
-The standalone stem mode and piano-isolation option can also use pymss. Choose
+The standalone stem mode and the "Separate a stem before transcribing" option can also use pymss. Choose
 "pymss model" and "Browse pymss models" to install its optional CPU runtime,
 search its catalog, download a model, or register local weights and a matching
 configuration with the correct architecture. Catalog models may download on
 first use. The catalog window lets you choose Hugging Face, ModelScope or the
-HF mirror as the download source. A piano-isolation model must actually produce a stem named piano.
-In stem mode, select a stem to save, type another pymss stem name, or choose
-All. Separation backends can still calculate stems that are not saved. The
+HF mirror as the download source. Select one stem to transcribe immediately,
+and enable "Keep separated WAV" only when you want an audio copy. In standalone
+stem mode, select a stem to save, type another pymss stem name, or choose All.
+The chosen model must produce the requested stem. Separation backends can still
+calculate stems that are not saved. The
 separate custom six-stem ONNX option supports only models compatible with the
 built-in HT-Demucs mix/stems interface and output order, not arbitrary ONNX.
 pymss runs on CPU in its isolated runtime; the existing DirectML option applies

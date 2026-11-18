@@ -9,6 +9,74 @@ from omnizart.cli.music.transcribe import transcribe
 
 
 class SeparationCliTests(unittest.TestCase):
+    def test_selected_stem_transcribed_and_only_saved_when_requested(self):
+        import mido
+        for keep in (False, True):
+            with self.subTest(keep=keep), TemporaryDirectory() as directory:
+                root = Path(directory)
+                audio = root / 'song.wav'
+                audio.touch()
+                seen = []
+                def isolate(_source, base, _model, selected_stems, source_name):
+                    self.assertEqual(selected_stems, ['vocals'])
+                    Path(str(base) + '_vocals.wav').write_bytes(b'separated audio')
+                def transcribe_selected(source, _model, output, *args):
+                    seen.append(Path(source))
+                    self.assertEqual(Path(source).read_bytes(), b'separated audio')
+                    midi = mido.MidiFile()
+                    midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                                       mido.Message('note_off', note=60, time=480)]))
+                    midi.save(output)
+                arguments = [str(audio), '--model-path', 'Piano', '--output', str(root),
+                             '--separate-stem', 'vocals', '--piano-separator', 'pymss', '--pymss-model', 'model']
+                if keep:
+                    arguments.append('--save-separated-stem')
+                with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                     patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_selected):
+                    result = CliRunner().invoke(transcribe, arguments)
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertTrue((root / 'song.mid').is_file())
+                self.assertFalse(seen[0].exists())
+                self.assertEqual((root / 'song_vocals.wav').exists(), keep)
+                if keep:
+                    self.assertEqual((root / 'song_vocals.wav').read_bytes(), b'separated audio')
+
+    def test_saved_stem_is_never_overwritten(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio, existing = root / 'song.wav', root / 'song_piano.wav'
+            audio.touch()
+            existing.write_bytes(b'keep')
+            with patch('omnizart.desktop.six_stems.separate') as separator:
+                result = CliRunner().invoke(transcribe, [str(audio), '--output', str(root),
+                    '--piano-only', '--save-separated-stem'])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn('Refusing to overwrite', result.output)
+            self.assertEqual(existing.read_bytes(), b'keep')
+            separator.assert_not_called()
+
+    def test_piano_stem_can_be_kept_next_to_midi(self):
+        import mido
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def isolate(_source, base, _model, selected_stems, source_name):
+                self.assertEqual(selected_stems, ['piano'])
+                Path(str(base) + '_piano.wav').write_bytes(b'piano')
+            def transcribe_piano(_source, _model, output, *args):
+                midi = mido.MidiFile()
+                midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                                   mido.Message('note_off', note=60, time=480)]))
+                midi.save(output)
+            with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                 patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_piano):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano', '--output', str(root),
+                    '--piano-only', '--piano-separator', 'pymss', '--pymss-model', 'model', '--save-separated-stem'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual((root / 'song_piano.wav').read_bytes(), b'piano')
+            self.assertTrue((root / 'song.mid').is_file())
+
     def test_pymss_isolation_multitrack_models_support_neural_score(self):
         import pretty_midi
         for model in ('YourMT3', 'MuScriptor'):
