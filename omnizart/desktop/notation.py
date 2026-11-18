@@ -131,7 +131,7 @@ def _simplify_to_voices(notes, limit=4):
     output = [note for key in sorted(kept) for note in chords[key]]
     return output, sum(len(chords[key]) for key in dropped)
 
-def _assign_piano_hands(entries, measure_length=16, preferences=None):
+def _assign_piano_hands(entries, measure_length=16, preferences=None, unit_scale=1):
     """Partition each attack using notes still held in both hands.
 
     A held note stays on its original staff. The cost prefers compact hands,
@@ -147,6 +147,7 @@ def _assign_piano_hands(entries, measure_length=16, preferences=None):
     active = {1: [], 2: []}
     positions = {1: None, 2: None}
     last_onset = {1: None, 2: None}
+    last_single_staff = None
     difficult_measures = set()
     for onset, attack in sorted(attacks.items()):
         attack.sort(key=lambda item: item[0][2])
@@ -173,11 +174,24 @@ def _assign_piano_hands(entries, measure_length=16, preferences=None):
             for staff, group in ((2, incoming[:cut]), (1, incoming[cut:])):
                 if group and positions[staff] is not None:
                     center = sum(note[2] for note in group) / len(group)
-                    movement += abs(center - positions[staff]) / max(1, onset - last_onset[staff])
-            cost = 10 * excess + 20 * fingers + 3 * crossing + left_span + right_span + .1 * misplaced + 4 * disagreement + movement
+                    movement += abs(center - positions[staff]) / max(1, (onset - last_onset[staff]) / unit_scale)
+            continuity = 0
+            if len(incoming) == 1 and last_single_staff is not None:
+                other = 2 if last_single_staff == 1 else 1
+                candidate_staff = 2 if cut else 1
+                if (candidate_staff == other and not active[last_single_staff] and not active[other] and
+                        onset - last_onset[last_single_staff] <= 8 * unit_scale and
+                        abs(incoming[0][2] - positions[last_single_staff]) <= 7):
+                    continuity = 3
+            chord_split = (6 if 0 < cut < len(incoming) and not active[1] and not active[2] and
+                           len({note[2] for note in incoming}) <= 5 and
+                           len({note[1] for note in incoming}) == 1 and
+                           incoming[-1][2] - incoming[0][2] <= 12 else 0)
+            cost = 10 * excess + 20 * fingers + 3 * crossing + left_span + right_span + .1 * misplaced + 4 * disagreement + movement + continuity + chord_split
             if best is None or cost < best[0]:
                 best = (cost, cut, left_span, right_span, len(set(left_pitches)), len(set(right_pitches)))
         _, cut, left_span, right_span, left_count, right_count = best
+        last_single_staff = (2 if cut else 1) if len(incoming) == 1 else None
         if max(left_span, right_span) > 12 or max(left_count, right_count) > 5:
             difficult_measures.add(onset // measure_length + 1)
         for staff, group in ((2, incoming[:cut]), (1, incoming[cut:])):
@@ -340,12 +354,15 @@ def _pitch(note, pitch, fifths=0):
     _element(p, 'octave', (pitch - natural[step] - alter) // 12 - 1)
 
 
-def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_before, tied_after, fifths=0):
+def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_before, tied_after, fifths=0, triplet=False):
+    first = None
     for index, pitch_info in enumerate(pitches):
         pitch, velocity = pitch_info[:2]
         note_tied_before = tied_before or (len(pitch_info) > 2 and pitch_info[2])
         note_tied_after = tied_after or (len(pitch_info) > 3 and pitch_info[3])
         note = _element(measure, 'note', dynamics=str(round(velocity * 100 / 90, 2)))
+        if first is None:
+            first = note
         if index:
             _element(note, 'chord')
         _pitch(note, pitch, fifths)
@@ -358,6 +375,10 @@ def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_b
         _element(note, 'type', kind)
         if dotted:
             _element(note, 'dot')
+        if triplet:
+            modification = _element(note, 'time-modification')
+            _element(modification, 'actual-notes', 3)
+            _element(modification, 'normal-notes', 2)
         if staff is not None:
             _element(note, 'staff', staff)
         if note_tied_before or note_tied_after:
@@ -366,11 +387,22 @@ def _write_note(measure, pitches, voice, staff, start, end, kind, dotted, tied_b
                 _element(notation, 'tied', type='stop')
             if note_tied_after:
                 _element(notation, 'tied', type='start')
+    return first
 
 
 
-def _write_rests(measure, start, end, measure_length, voice, staff):
-    for left, right, kind, dotted in _duration_pieces(start, end, measure_length):
+def _score_pieces(start, end, measure_length, unit_scale):
+    if unit_scale == 1:
+        for left, right, kind, dotted in _duration_pieces(start, end, measure_length):
+            yield left, right, kind, dotted, False
+    else:
+        from omnizart.desktop.rhythm import pieces
+        yield from pieces(start, end, measure_length)
+
+
+def _write_rests(measure, start, end, measure_length, voice, staff, unit_scale=1):
+    written = []
+    for left, right, kind, dotted, triplet in _score_pieces(start, end, measure_length, unit_scale):
         note = _element(measure, 'note')
         _element(note, 'rest')
         _element(note, 'duration', right - left)
@@ -378,11 +410,41 @@ def _write_rests(measure, start, end, measure_length, voice, staff):
         _element(note, 'type', kind)
         if dotted:
             _element(note, 'dot')
+        if triplet:
+            modification = _element(note, 'time-modification')
+            _element(modification, 'actual-notes', 3)
+            _element(modification, 'normal-notes', 2)
         if staff is not None:
             _element(note, 'staff', staff)
+        written.append((note, left, right, kind, triplet))
+    return written
+
+
+def _mark_tuplets(events):
+    """Bracket consecutive triplet pieces of the same written value."""
+    groups = []
+    current, key = [], None
+    for note, left, right, kind, triplet in events:
+        current_key = kind if triplet else None
+        if current and (current_key != key or left != current[-1][2] or len(current) == 3):
+            groups.append(current)
+            current = []
+        if triplet:
+            current.append((note, left, right))
+            key = current_key
+        else:
+            key = None
+    if current:
+        groups.append(current)
+    for group in groups:
+        for note, typ in ((group[0][0], 'start'), (group[-1][0], 'stop')):
+            notations = note.find('notations')
+            if notations is None:
+                notations = _element(note, 'notations')
+            _element(notations, 'tuplet', type=typ)
 
 def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto'):
-    """Write a 16th-grid MusicXML draft, with independent voices and stable clefs."""
+    """Write a beat-aligned MusicXML draft with independent voices and stable clefs."""
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(f'Refusing to overwrite existing score: {destination}')
@@ -454,6 +516,15 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         # create a whole silent bar when that happens.
         grid.origin += grid.meter
     first_left = grid.unit(0) if grid else 0
+    from omnizart.desktop.rhythm import triplet_beats, quantize, next_position
+    def beat_position(time):
+        return grid.position(time) if grid else time * bpm / 60
+    triplets = (triplet_beats(beat_position(start) for entries in notes.values() for start, _, _, _ in entries)
+                if denominator == 4 else set())
+    unit_scale = 3 if triplets else 1
+    original_length = length
+    length *= unit_scale
+    first_left *= unit_scale
     score = ET.Element('score-partwise', version='4.0')
     work = _element(score, 'work')
     _element(work, 'work-title', Path(source).stem)
@@ -463,8 +534,14 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         is_piano = piano and len(notes) == 1
         quantized = []
         for start, end, pitch, velocity in entries:
-            onset = grid.unit(start) if grid else max(0, round(start * bpm / 60 * 4))
-            offset = max(onset + 1, grid.unit(end) if grid else round(end * bpm / 60 * 4))
+            if triplets:
+                onset = quantize(beat_position(start), triplets)
+                offset = quantize(beat_position(end), triplets)
+                if offset <= onset:
+                    offset = next_position(onset, triplets)
+            else:
+                onset = grid.unit(start) if grid else max(0, round(start * bpm / 60 * 4))
+                offset = max(onset + 1, grid.unit(end) if grid else round(end * bpm / 60 * 4))
             quantized.append((onset, offset, pitch, velocity))
         if simplify and not is_piano and len(_voices(quantized)) > 4:
             quantized, dropped = _simplify_to_voices(quantized)
@@ -476,8 +553,10 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         if neural_staff:
             from omnizart.desktop.svsep import predict_staff
             quantized.sort()
-            preferences = predict_staff(quantized, length, denominator)
-        staff_notes = _assign_piano_hands(quantized, length, preferences) if is_piano else {1: quantized}
+            prediction_notes = [(round(start / unit_scale), max(round(start / unit_scale) + 1, round(end / unit_scale)), pitch, velocity)
+                                for start, end, pitch, velocity in quantized]
+            preferences = predict_staff(prediction_notes, original_length, denominator)
+        staff_notes = _assign_piano_hands(quantized, length, preferences, unit_scale) if is_piano else {1: quantized}
         if simplify and is_piano:
             staff_notes = _simplify_piano_hands(staff_notes, length)
         score_part = _element(parts, 'score-part', id=f'P{number}')
@@ -503,7 +582,7 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                                **({'implicit': 'yes'} if measure_no == 0 and first_left else {}))
             if measure_no == 0:
                 attrs = _element(measure, 'attributes')
-                _element(attrs, 'divisions', 4)
+                _element(attrs, 'divisions', 4 * unit_scale)
                 if mode:
                     key_signature = _element(attrs, 'key')
                     _element(key_signature, 'fifths', fifths)
@@ -523,12 +602,13 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                 _element(metro, 'beat-unit', 'quarter')
                 initial_bpm = bpm
                 if grid:
-                    initial_marks = grid.tempo_marks(length, 0)
-                    initial_bpm = next((value for offset, value in reversed(initial_marks) if offset <= first_left), bpm)
+                    initial_marks = grid.tempo_marks(original_length, 0)
+                    initial_bpm = next((value for offset, value in reversed(initial_marks) if offset * unit_scale <= first_left), bpm)
                 _element(metro, 'per-minute', f'{initial_bpm:g}')
                 _element(direction, 'sound', tempo=f'{initial_bpm:g}')
             if grid:
-                for offset, current_bpm in grid.tempo_marks(length, measure_no):
+                for offset, current_bpm in grid.tempo_marks(original_length, measure_no):
+                    offset *= unit_scale
                     if measure_no == 0:
                         if offset < first_left:
                             continue
@@ -551,20 +631,24 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                     _element(backup, 'duration', right - left)
                 voice = str((staff - 1) * 100 + lane_idx + 1)
                 cursor = left
+                written = []
                 for start, end, pitches in lane:
                     if start >= right or end <= left:
                         continue
                     segment_start, segment_end = max(start, left), min(end, right)
                     if segment_start > cursor:
-                        _write_rests(measure, cursor, segment_start, length, voice,
-                                     staff if is_piano else None)
-                    for a, b, kind, dotted in _duration_pieces(segment_start, segment_end, length):
-                        _write_note(measure, pitches, voice, staff if is_piano else None, a, b, kind, dotted,
-                                    a > start, b < end, fifths)
+                        written.extend(_write_rests(measure, cursor, segment_start, length, voice,
+                                                    staff if is_piano else None, unit_scale))
+                    for a, b, kind, dotted, triplet in _score_pieces(segment_start, segment_end, length, unit_scale):
+                        note = _write_note(measure, pitches, voice, staff if is_piano else None, a, b, kind, dotted,
+                                           a > start, b < end, fifths, triplet)
+                        written.append((note, a, b, kind, triplet))
                     cursor = segment_end
                 if cursor < right:
-                    _write_rests(measure, cursor, right, length, voice,
-                                 staff if is_piano else None)
+                    written.extend(_write_rests(measure, cursor, right, length, voice,
+                                                staff if is_piano else None, unit_scale))
+                if triplets:
+                    _mark_tuplets(written)
             from omnizart.desktop.score_export import _hide_covered_rests
             _hide_covered_rests(measure)
     destination.parent.mkdir(parents=True, exist_ok=True)

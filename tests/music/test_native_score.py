@@ -254,6 +254,17 @@ class NativeScoreTests(unittest.TestCase):
         self.assertEqual([note[2] for note in hands[2]], [48, 60])
         self.assertEqual([note[2] for note in hands[1]], [72, 84])
 
+    def test_adjacent_melody_notes_remain_in_the_same_hand(self):
+        entries = [(0, 4, 60, 80), (4, 8, 62, 80), (8, 12, 64, 80)]
+        hands = _assign_piano_hands(entries)
+        self.assertTrue(entries == hands[1] or entries == hands[2])
+
+    def test_different_note_lengths_can_be_split_between_hands(self):
+        entries = [(0, 8, 45, 80), (0, 4, 52, 80)]
+        hands = _assign_piano_hands(entries)
+        self.assertEqual([n[2] for n in hands[2]], [45])
+        self.assertEqual([n[2] for n in hands[1]], [52])
+
     def test_dense_overlap_preserves_attacks_and_fixed_clefs(self):
         with TemporaryDirectory() as directory:
             path, result = Path(directory) / 'in.mid', Path(directory) / 'out.musicxml'

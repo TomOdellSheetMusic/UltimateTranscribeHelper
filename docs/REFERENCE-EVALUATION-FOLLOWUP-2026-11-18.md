@@ -87,10 +87,20 @@ note elements (including any tied continuations). The old exporter would have
 written those sounding pitches as C and F natural. The change is covered by
 tests over every MIDI pitch and key signature, plus explicit octave examples.
 
-The reference scores also contain tuplets and overlapping voices. Adaptive
-rhythm spelling and tuplets remain unsupported by the exporter's fixed
-sixteenth grid. This evaluation does not establish that generated scores are
-readable, and does not address that limitation.
+The reference scores also contain tuplets and overlapping voices. The exporter
+now detects some clearly supported eighth- and quarter-note triplet patterns
+in quarter-note meters while retaining straight sixteenths elsewhere. Its
+conservative beat-level heuristic does not cover all tuplets or compound meters,
+and alignment and expressive timing can still make its interpretation wrong.
+This evaluation does not establish that generated scores are readable.
+
+An automated example reproduces the three quarter-note triplet chords in
+measure 28 of the Go Tell Her Now reference. Music21 independently parsed the
+generated MusicXML as three quarter-note triplets, each lasting two thirds of a
+quarter note. A measured Best of Friends passage that had initially produced
+false triplets was added as a negative regression; the corrected detector does
+not classify that passage as a triplet. These are small examples rather than a
+general accuracy benchmark.
 
 ## DuET score experiment
 
