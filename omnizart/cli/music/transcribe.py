@@ -155,7 +155,9 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             _transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
     if smooth_notes or remove_short_ms or lint_notes or score or musescore or compare_midi:
         target = Path(output)
-        if target.is_dir():
+        if input_is_piano and model_path not in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano"):
+            target = _midi_target(output, input_audio)
+        elif target.is_dir():
             target = target / (Path(input_audio).stem + ".mid")
         elif model_path not in ("Basic Pitch", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor") and not include_vocals:
             if not str(target).endswith(".mid"):

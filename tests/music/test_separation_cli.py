@@ -75,6 +75,24 @@ class SeparationCliTests(unittest.TestCase):
             self.assertNotEqual(result.exit_code, 0)
             self.assertIn('cannot be combined', result.output)
 
+    def test_already_piano_preserves_midi_extension_for_multi_instrument_model(self):
+        import mido
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def make_midi(_audio, _model, output, *args):
+                midi = mido.MidiFile()
+                midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                                   mido.Message('note_off', note=60, time=480)]))
+                midi.save(output)
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=make_midi):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Pop',
+                    '--input-is-piano', '--output', str(root / 'chosen.midi'), '--score'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue((root / 'chosen.midi').is_file())
+            self.assertTrue((root / 'chosen.musicxml').is_file())
+
     def test_piano_only_yourmt3_preserves_multitrack_and_writes_one_piano(self):
         import pretty_midi
         with TemporaryDirectory() as directory:
