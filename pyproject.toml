@@ -77,6 +77,10 @@ omnizart = 'omnizart.cli.cli:entry'
 line-length = 120
 target-version = ['py36']
 
+[tool.pytest.ini_options]
+# Windows Tcl may fail to initialize repeatedly under file-descriptor capture.
+addopts = "--capture=sys"
+
 [build-system]
 requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"

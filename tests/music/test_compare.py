@@ -29,6 +29,8 @@ class CompareTests(unittest.TestCase):
             self.assertEqual(write_comparison(a, b, output), 3)
             report = output.read_text(encoding='utf-8')
             self.assertIn('Matched: 1; differences: 3', report)
+            self.assertIn('Precision: 0.333; recall: 0.500; F1: 0.400', report)
+            self.assertIn('If the comparison MIDI is a verified reference', report)
             self.assertIn('00:00.500', report)
             with self.assertRaises(FileExistsError):
                 write_comparison(a, b, output)

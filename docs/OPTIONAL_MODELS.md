@@ -14,6 +14,12 @@ Python environment. Its checkpoint download currently requires Git and Git LFS
 on PATH. The weights are published under Apache-2.0 terms; review the upstream
 project's per-component notices before redistributing a build.
 
+When **Isolate piano before transcribing** is combined with YourMT3, the app
+transcribes the separated piano stem and combines YourMT3's predicted notes
+into one piano track. The original multi-instrument prediction is retained as
+`_yourmt3_multitrack.mid`. Relabelling does not remove non-piano sounds or
+guarantee that the notes are correct; the separator and model can make errors.
+
 ## MuScriptor
 
 In **Models & import**, open the official [MuScriptor small model page](https://huggingface.co/MuScriptor/muscriptor-small),
@@ -48,6 +54,11 @@ The score may contain leading rests to preserve a pickup before the first
 bar line. The original MIDI is not changed. A separately installed MuseScore 4
 can optionally render a PDF.
 
+**Score key** can be selected manually. Auto estimates major or minor keys
+from note durations only when the evidence is sufficiently distinct; otherwise
+no key is asserted. Flat keys use common flat spellings. Key detection and
+enharmonic spelling are estimates and need review. Key changes are not detected.
+
 The score is a draft: automatic tempo, beat alignment, hand assignment, pitch
 spelling, durations and ties may need editing. Percussion tracks are omitted
 from MusicXML but remain in the MIDI. Time-signature changes are not yet supported. Dense piano passages may need
@@ -60,14 +71,22 @@ for review. Score export does not alter the MIDI.
 **Experimental: neural piano hand assignment** uses the
 [Piano SVSep](https://github.com/CPJKU/piano_svsep) research model as a source
 of staff suggestions. On first use, Omnizart installs dependencies into a
-separate environment and downloads a SHA-256-verified model checkpoint.
+separate environment, including CPU PyTorch, and downloads a SHA-256-verified
+model checkpoint. First-time setup requires internet and can use around 1.6 GiB
+of disk space. The installation checks the model with a small inference before
+marking it ready.
 The code is MIT-licensed; the checkpoint's redistribution terms need separate review.
 It requires internet for setup, runs on CPU, and can take time on long pieces.
 The model's suggestions are balanced with hand-span checks; they are not a
-guarantee of playable music. Compare the result with the default assignment.
+guarantee of playable music. The assignment keeps the input notes; it does not
+automatically remove notes that make a passage unplayable. Compare the result
+with the default assignment and review difficult passages.
 This option requires a single piano instrument track.
 
-**Simplify score when needed** is separate and off by default. For non-piano
-parts exceeding four overlapping voices it may omit quieter conflicting notes
-from the MusicXML score, with a warning containing the number omitted. It
-never modifies the original MIDI.
+**Simplify score when needed** is off by default. For piano it creates a separate
+`_simplified.musicxml` in addition to the full score and may omit
+notes to reduce simultaneous hand spans and note counts, preserving the top
+right-hand and bottom left-hand notes where possible. For other instruments it
+may omit quieter conflicting groups when more than four voices overlap. It
+reports omissions and never changes the original MIDI. This heuristic does not
+guarantee playability; review the result and compare it with the full score.

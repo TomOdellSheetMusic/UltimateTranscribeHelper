@@ -36,6 +36,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--neural-staff", is_flag=True, help="Use experimental Piano SVSep staff suggestions for one piano track.")
 @click.option("--simplify-score", is_flag=True, help="Omit conflicting notes from the score if necessary; preserve the MIDI.")
 @click.option("--score-tempo", type=click.FloatRange(30, 300), default=None, help="Score tempo in BPM; omit to estimate it.")
+@click.option("--score-key", default="Auto", help="Score key, for example Bb or F#m; Auto estimates a key.")
 @click.option("--musescore", type=click.Path(exists=True, dir_okay=False), default=None, help="MuseScore executable for optional MusicXML export.")
 @click.option("--lint-notes", is_flag=True, help="Save a non-destructive transcription review report.")
 @click.option("--smooth-notes", is_flag=True, help="Also save a conservatively smoothed MIDI copy.")
@@ -43,7 +44,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--remove-short-ms", type=click.FloatRange(0, 200), default=0, help="Also remove notes shorter than this duration; 0 disables.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
-               compare_midi, score_grid, score, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms):
+               compare_midi, score_grid, score, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms):
     """Transcribe a single audio and output as a MIDI file.
 
     This will output a MIDI file with the same name as the given audio, except the
@@ -83,8 +84,30 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         with TemporaryDirectory(prefix="omnizart-piano-") as temporary:
             base = Path(temporary) / "separated"
             separate_stems(input_audio, base, device=uvr_device, gpu_index=gpu_index)
-            _transcribe(str(base.with_name(base.name + "_piano.wav")), model_path, output,
-                        onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
+            piano_audio = str(base.with_name(base.name + "_piano.wav"))
+            if model_path == "YourMT3":
+                from omnizart.desktop.piano_midi import write_single_piano
+                raw = Path(temporary) / 'yourmt3.mid'
+                _transcribe(piano_audio, model_path, str(raw), onset_th, duration_th,
+                            instrument_th, frame_th, minimum_note_ms)
+                target = Path(output)
+                if target.is_dir():
+                    target = target / (Path(input_audio).stem + '.mid')
+                elif target.suffix.lower() not in ('.mid', '.midi'):
+                    target = Path(str(target) + '.mid')
+                original = target.with_name(target.stem + '_yourmt3_multitrack.mid')
+                if target.exists() or original.exists():
+                    raise click.ClickException('Refusing to overwrite an existing piano or multitrack MIDI.')
+                with raw.open('rb') as original_file, original.open('xb') as preserved:
+                    shutil.copyfileobj(original_file, preserved)
+                try:
+                    write_single_piano(original, target)
+                except (OSError, ValueError) as exc:
+                    raise click.ClickException(f'Original YourMT3 MIDI saved to {original}, but piano output failed: {exc}') from exc
+                click.echo(f'Original YourMT3 multitrack MIDI saved to {original}.')
+            else:
+                _transcribe(piano_audio, model_path, output,
+                            onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
     elif remove_vocals or include_vocals:
         from omnizart.desktop.separation import remove_vocals as separate, separate_stems
         with TemporaryDirectory(prefix="omnizart-separation-") as temporary:
@@ -147,13 +170,18 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         from omnizart.desktop.notation import export_score
         score_path = target.with_name(target.stem + ".musicxml")
         try:
-            bpm = export_score(target, score_path, tempo=score_tempo, simplify=simplify_score, neural_staff=neural_staff,
+            score_options = dict(tempo=score_tempo, score_key=score_key, neural_staff=neural_staff,
                                audio=input_audio, align_bars=align_bars, downbeat=score_downbeat,
                                beats_per_bar=int(score_meter) if score_meter else None,
                                piano=(piano_only or model_path in
                                       ("Piano", "PianoV2", "Transkun (piano)",
                                        "Transkun V2 Aug", "Pedal Piano")))
+            bpm = export_score(target, score_path, simplify=simplify_score and not score_options['piano'], **score_options)
             click.echo(f"MusicXML draft saved to {score_path} ({bpm:g} BPM). Review its notation.")
+            if simplify_score and score_options['piano']:
+                simplified_path = target.with_name(target.stem + "_simplified.musicxml")
+                export_score(target, simplified_path, simplify=True, **score_options)
+                click.echo(f"Simplified MusicXML saved to {simplified_path}. Review omitted notes and playability.")
             if musescore:
                 from omnizart.desktop.score_export import _run_musescore
                 pdf = target.with_name(target.stem + ".pdf")

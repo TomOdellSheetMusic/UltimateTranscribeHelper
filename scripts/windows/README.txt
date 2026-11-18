@@ -56,8 +56,12 @@ voices and spelling are estimates; review the resulting notation. The original
 MIDI is not changed. Optional neural piano hand assignment installs the
 Piano SVSep code, its model checkpoint and dependencies on first use. The code
 is MIT-licensed; the checkpoint's redistribution terms need separate review.
-The optional simplify-score setting can omit conflicting notes from the score,
-with a warning; the original MIDI is preserved.
+First-time setup requires internet and can use around 1.6 GiB of disk space.
+Hand assignment preserves the notes and cannot guarantee a playable score.
+The optional simplify-score setting creates a separate simplified piano score
+and may omit notes to reduce hand span and simultaneous notes, with a warning.
+The full score and original MIDI are preserved. For non-piano instruments it
+may simplify the score when needed. Review all results for playability.
 
 
 Optional "Create note review report" writes a separate `_review.txt` with

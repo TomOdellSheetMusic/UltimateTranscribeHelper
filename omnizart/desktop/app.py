@@ -32,7 +32,7 @@ ACCENT = "#a49aff"
 FIELD = "#252d40"
 CUSTOM_MODEL = "Imported Omnizart model"
 RESULT_SUFFIXES = (".mid", ".midi", ".csv", "_beat.csv", "_down_beat.csv", "_f0.csv",
-                   "_trans.wav", "_accompaniment.wav", "_smoothed.mid", "_review.txt", "_comparison.txt", ".musicxml", "_drums.wav",
+                   "_trans.wav", "_accompaniment.wav", "_smoothed.mid", "_yourmt3_multitrack.mid", "_review.txt", "_comparison.txt", ".musicxml", "_simplified.musicxml", "_drums.wav",
                    "_bass.wav", "_other.wav", "_vocals.wav", "_guitar.wav", "_piano.wav", ".pdf")
 
 SETTING_HELP = {
@@ -264,6 +264,7 @@ class Application(ttk.Frame):
         self.compare_path = tk.StringVar()
         self.score_grid = tk.StringVar(value="Off")
         self.score_tempo = tk.StringVar(value="Auto")
+        self.score_key = tk.StringVar(value="Auto")
         self.align_bars = tk.BooleanVar(value=True)
         self.score_downbeat = tk.StringVar(value="Auto")
         self.score_meter = tk.StringVar(value="Auto")
@@ -447,7 +448,7 @@ class Application(ttk.Frame):
         Tooltip(self.score_grid_picker, "Auto estimates tempo from the notes. Enter a BPM to override it; notation uses a sixteenth-note grid.")
         self.score_simplify_option = ttk.Checkbutton(card, text="Simplify score when needed", variable=self.simplify_score, style="App.TCheckbutton")
         self.score_simplify_option.grid(row=20, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        Tooltip(self.score_simplify_option, "If an instrument exceeds four overlapping voices, omit quieter conflicting notes from the score. The original MIDI is unchanged; omissions are reported.")
+        Tooltip(self.score_simplify_option, "For piano, creates a separate simplified MusicXML score. For other instruments, simplifies the score if necessary. Notes may be omitted; the original MIDI is preserved.")
         self.neural_staff_option = ttk.Checkbutton(card, text="Experimental: neural piano hand assignment", variable=self.neural_staff, style="App.TCheckbutton")
         self.neural_staff_option.grid(row=21, column=0, columnspan=2, sticky="w", pady=(10, 0))
         Tooltip(self.neural_staff_option, "Uses Piano SVSep on CPU to suggest piano staves, balanced with hand reach. First use installs dependencies and downloads its model. Results still require review.")
@@ -466,6 +467,13 @@ class Application(ttk.Frame):
         self.meter_picker = ttk.Combobox(self.meter_frame, textvariable=self.score_meter, values=["Auto", "3", "4"], state="readonly", style="App.TCombobox", width=6)
         self.meter_picker.pack(side="left")
         Tooltip(self.meter_picker, "Override the detected meter when you know the recording has three or four beats per bar.")
+        key_frame = ttk.Frame(card, style="Card.TFrame")
+        key_frame.grid(row=24, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Label(key_frame, text="Score key", style="CardLabel.TLabel").pack(side="left", padx=(0, 8))
+        from omnizart.desktop.score_key import KEYS
+        key_picker = ttk.Combobox(key_frame, textvariable=self.score_key, values=["Auto", *KEYS], state="readonly", width=7)
+        key_picker.pack(side="left")
+        Tooltip(key_picker, "Auto estimates a key when there is enough evidence. Review key signatures and enharmonic spelling.")
 
         self.settings_card = ttk.Frame(body, style="Card.TFrame", padding=(22, 12))
         self.settings_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
@@ -1280,6 +1288,8 @@ class Application(ttk.Frame):
                     cmd.append("--neural-staff")
                 if self.simplify_score.get():
                     cmd.append("--simplify-score")
+                if self.score_key.get() != "Auto":
+                    cmd.extend(["--score-key", self.score_key.get()])
                 if score_tempo.lower() != "auto":
                     cmd.extend(["--score-tempo", score_tempo])
                 if self.pdf_export.get():
@@ -1338,7 +1348,7 @@ class Application(ttk.Frame):
                 kind, value = self.messages.get_nowait()
                 if kind == "log":
                     if "UserWarning:" in value and any(text in value for text in
-                            ("Piano hand spans", "Dense overlapping piano notes", "Percussion tracks are omitted", "Score simplification omitted", "Audio bar alignment")):
+                            ("Piano hand spans", "Dense overlapping piano notes", "Percussion tracks are omitted", "Score simplification omitted", "Audio bar alignment", "Score key estimated")):
                         self.score_warnings.append(value.split("UserWarning:", 1)[1].strip())
                     self.log.configure(state="normal")
                     self.log.insert("end", value)

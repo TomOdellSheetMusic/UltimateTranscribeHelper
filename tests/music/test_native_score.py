@@ -4,10 +4,69 @@ from tempfile import TemporaryDirectory
 import unittest
 from xml.etree import ElementTree as ET
 import mido
-from omnizart.desktop.notation import export_score, _estimate_tempo, _piano_voices, _assign_piano_hands
+from omnizart.desktop.notation import export_score, _estimate_tempo, _piano_voices, _assign_piano_hands, _simplify_piano_hands
 
 
 class NativeScoreTests(unittest.TestCase):
+    def test_explicit_flat_key_writes_signature_and_flat_spelling(self):
+        with TemporaryDirectory() as directory:
+            path, output = Path(directory) / 'in.mid', Path(directory) / 'out.musicxml'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=70, velocity=80),
+                                               mido.Message('note_off', note=70, time=480)]))
+            midi.save(path)
+            export_score(path, output, tempo=120, score_key='Bb')
+            root = ET.parse(output).getroot()
+            self.assertEqual(root.findtext('.//key/fifths'), '-2')
+            self.assertEqual(root.findtext('.//key/mode'), 'major')
+            self.assertEqual(root.findtext('.//note/pitch/step'), 'B')
+            self.assertEqual(root.findtext('.//note/pitch/alter'), '-1')
+
+    def test_key_estimation_does_not_claim_a_key_for_one_note(self):
+        from omnizart.desktop.score_key import estimate_key
+        self.assertIsNone(estimate_key({(0, 0): [(0, 1, 60, 80)]}))
+
+    def test_simplified_piano_score_keeps_full_score_and_midi(self):
+        with TemporaryDirectory() as directory:
+            midi_path = Path(directory) / 'input.mid'
+            full = Path(directory) / 'full.musicxml'
+            simplified = Path(directory) / 'simplified.musicxml'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            track = mido.MidiTrack()
+            for pitch in range(48, 60):
+                track.append(mido.Message('note_on', note=pitch, velocity=80))
+            for index, pitch in enumerate(range(48, 60)):
+                track.append(mido.Message('note_off', note=pitch, time=480 if index == 0 else 0))
+            midi.tracks.append(track)
+            midi.save(midi_path)
+            original = midi_path.read_bytes()
+            with self.assertWarns(UserWarning):
+                export_score(midi_path, full, tempo=120)
+            full_bytes = full.read_bytes()
+            with self.assertWarnsRegex(UserWarning, 'Score simplification omitted'):
+                export_score(midi_path, simplified, tempo=120, simplify=True)
+            full_count = len(ET.parse(full).findall('.//note/pitch'))
+            simplified_count = len(ET.parse(simplified).findall('.//note/pitch'))
+            self.assertEqual(full_count, 12)
+            self.assertLess(simplified_count, full_count)
+            self.assertEqual(full.read_bytes(), full_bytes)
+            self.assertEqual(midi_path.read_bytes(), original)
+
+    def test_piano_simplification_reports_omissions_and_preserves_source_notes(self):
+        source = {1: [(0, 4, pitch, 80) for pitch in (60, 62, 64, 65, 67, 72)],
+                  2: [(0, 4, 36, 80), (0, 4, 60, 80)]}
+        original = {staff: list(notes) for staff, notes in source.items()}
+        with self.assertWarnsRegex(UserWarning, 'omitted.*measures 1') as warning:
+            result = _simplify_piano_hands(source, 16)
+        self.assertIn('Omitted notes (measure, hand, MIDI pitch):', str(warning.warning))
+        self.assertEqual(source, original)
+        for staff in result:
+            pitches = [note[2] for note in result[staff]]
+            self.assertLessEqual(len(set(pitches)), 5)
+            self.assertLessEqual(max(pitches) - min(pitches), 12)
+        self.assertIn(72, [note[2] for note in result[1]])
+        self.assertIn(36, [note[2] for note in result[2]])
+
     def test_overlapping_note_lengths_get_independent_voices(self):
         with TemporaryDirectory() as directory:
             midi_file = Path(directory) / 'input.mid'
@@ -91,12 +150,28 @@ class NativeScoreTests(unittest.TestCase):
                            for index in range(40)]}
         self.assertEqual(_estimate_tempo(notes, 120), 154)
 
-    def test_overflow_moves_to_other_staff_for_editor_compatibility(self):
+    def test_overflow_preserves_staff_and_slices_dense_voices(self):
         notes = {1: [], 2: [(0, length, 40 + length, 80) for length in range(1, 6)]}
-        voices = _piano_voices(notes)
-        self.assertEqual(len(voices[2]), 4)
-        self.assertEqual(len(voices[1]), 1)
-        self.assertEqual(sum(len(lane) for staff in voices.values() for lane in staff), 5)
+        with self.assertWarnsRegex(UserWarning, 'Dense overlapping'):
+            voices = _piano_voices(notes)
+        self.assertFalse(voices[1])
+        self.assertEqual(len(voices[2]), 1)
+        # Count note attacks, excluding continuations represented by ties.
+        attacks = [pitch[0] for lane in voices[2] for _, _, chord in lane
+                   for pitch in chord if not pitch[2]]
+        self.assertEqual(sorted(attacks), [41, 42, 43, 44, 45])
+
+    def test_overflow_does_not_add_a_sixth_note_to_the_other_hand(self):
+        notes = {1: [(0, 8, pitch, 80) for pitch in range(60, 65)],
+                 2: [(0, length, 54 + length, 80) for length in range(1, 6)]}
+        with self.assertWarnsRegex(UserWarning, 'Dense overlapping'):
+            voices = _piano_voices(notes)
+        upper_attacks = [pitch[0] for lane in voices[1] for _, _, chord in lane
+                         for pitch in chord if len(pitch) == 2 or not pitch[2]]
+        self.assertEqual(sorted(upper_attacks), [60, 61, 62, 63, 64])
+        lower_attacks = [pitch[0] for lane in voices[2] for _, _, chord in lane
+                         for pitch in chord if len(pitch) == 2 or not pitch[2]]
+        self.assertEqual(sorted(lower_attacks), [55, 56, 57, 58, 59])
 
     def test_voice_overflow_does_not_force_a_wide_span_on_the_other_hand(self):
         notes = {1: [(0, 8, 90, 80)],

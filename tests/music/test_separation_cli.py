@@ -9,6 +9,52 @@ from omnizart.cli.music.transcribe import transcribe
 
 
 class SeparationCliTests(unittest.TestCase):
+    def test_piano_only_yourmt3_preserves_multitrack_and_writes_one_piano(self):
+        import pretty_midi
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def make_output(_audio, _model, output, *args):
+                midi = pretty_midi.PrettyMIDI()
+                for program, pitch in ((0, 60), (40, 67)):
+                    instrument = pretty_midi.Instrument(program=program)
+                    instrument.notes.append(pretty_midi.Note(velocity=80, pitch=pitch, start=0, end=1))
+                    midi.instruments.append(instrument)
+                midi.write(str(output))
+            with patch('omnizart.desktop.six_stems.separate'), \
+                 patch('omnizart.cli.music.transcribe._transcribe', side_effect=make_output):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'YourMT3',
+                    '--piano-only', '--output', str(root), '--score'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            piano = pretty_midi.PrettyMIDI(str(root / 'song.mid'))
+            original = pretty_midi.PrettyMIDI(str(root / 'song_yourmt3_multitrack.mid'))
+            self.assertEqual(len(piano.instruments), 1)
+            self.assertEqual(piano.instruments[0].program, 0)
+            self.assertEqual(sorted(note.pitch for note in piano.instruments[0].notes), [60, 67])
+            self.assertEqual(len(original.instruments), 2)
+            self.assertTrue((root / 'song.musicxml').is_file())
+
+    def test_piano_simplification_writes_full_and_separate_score(self):
+        import mido
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            def make_midi(*args):
+                midi = mido.MidiFile()
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('note_on', note=60, velocity=80),
+                    mido.Message('note_off', note=60, time=480)]))
+                midi.save(str(folder / 'song.mid'))
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=make_midi):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Transkun (piano)',
+                    '--output', str(folder), '--score', '--simplify-score'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue((folder / 'song.musicxml').is_file())
+            self.assertTrue((folder / 'song_simplified.musicxml').is_file())
+            self.assertTrue((folder / 'song.mid').is_file())
+
     def test_optional_uvr_model_is_routed(self):
         with TemporaryDirectory() as directory:
             audio = Path(directory) / "song.wav"
@@ -73,7 +119,7 @@ class SeparationCliTests(unittest.TestCase):
             audio.touch()
             result = CliRunner().invoke(transcribe, [str(audio), "--remove-vocals", "--uvr-device", "directml"])
             self.assertNotEqual(result.exit_code, 0)
-            self.assertIn("only to UVR", result.output)
+            self.assertIn("DirectML requires piano-only or UVR vocal separation", result.output)
 
     def test_uvr_is_selected_and_passes_both_stems(self):
         with TemporaryDirectory() as directory:

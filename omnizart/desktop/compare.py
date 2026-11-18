@@ -44,11 +44,17 @@ def write_comparison(source, reference, destination, tolerance=0.1):
         if index not in used:
             differences.append((time, track, f"Only in comparison MIDI: note {pitch}"))
     differences.sort()
+    precision = len(used) / len(current) if current else 0.0
+    recall = len(used) / len(prior) if prior else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     lines = ["Omnizart MIDI comparison", "", f"New: {Path(source).name}", f"Comparison: {Path(reference).name}",
              "", "Same pitch and onset within 100 ms counts as a match. Track names and note lengths are not matched.",
              "Percussion channel is excluded. Audio must start at the same position in both files.",
              "A difference is not proof that either transcription is correct.", "",
-             f"Matched: {len(used)}; differences: {len(differences)}.", ""]
+             f"Matched: {len(used)}; differences: {len(differences)}.",
+             "If the comparison MIDI is a verified reference, onset metrics are:",
+             f"Precision: {precision:.3f}; recall: {recall:.3f}; F1: {f1:.3f}.",
+             "These metrics do not assess note length, hand assignment, rhythm notation or playability.", ""]
     for timestamp, track, detail in differences[:1000]:
         minutes, seconds = divmod(timestamp, 60)
         lines.append(f"{int(minutes):02d}:{seconds:06.3f}  |  {track}  |  {detail}")
