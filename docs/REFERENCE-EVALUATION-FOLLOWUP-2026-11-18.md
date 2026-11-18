@@ -102,6 +102,11 @@ false triplets was added as a negative regression; the corrected detector does
 not classify that passage as a triplet. These are small examples rather than a
 general accuracy benchmark.
 
+The reference archive contains twelve explicit 3:2 quarter-note tuplets in Go
+Tell Her Now and 29 explicit 3:2 eighth-note tuplets in You're Gonna Break My
+Heart Tonight. Those two common values are supported by the new spelling path;
+this count alone does not verify that their detection succeeds from audio.
+
 ## DuET score experiment
 
 [DuET](https://github.com/wei-zeng98/DuET) revision
