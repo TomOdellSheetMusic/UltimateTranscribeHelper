@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.8 - 2026-11-19
+
+- Process long ROSVOT recordings in overlapping sections so the final portion
+  is not silently dropped by the model's 160-second default limit.
+- Preserve vocal note timing in the aligned hand MIDI while retaining the
+  notated rhythm in MusicXML.
+- Default Basic Pitch vocal output to standard pitches, with an option to
+  retain its expressive pitch bends.
+
 ## 0.6.7 - 2026-11-19
 
 - Order combined MIDI tracks and channels from left hand to right hand to
