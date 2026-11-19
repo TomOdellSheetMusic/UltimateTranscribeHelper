@@ -13,7 +13,7 @@ def merge_tracks(instrument_midi, vocal_midi, destination):
     for track in vocals:
         track.name = "Vocals"
         track.program = 54  # General MIDI voice oohs
-    result.instruments = vocals + result.instruments
+    result.instruments.extend(vocals)
     result.write(str(destination))
 
 

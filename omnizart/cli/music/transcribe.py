@@ -349,7 +349,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             from omnizart.desktop.hand_midi import split_piano_midi
             hands_path = original_target.with_name(original_target.stem + '_hands.mid')
             try:
-                right, left = split_piano_midi(target, hands_path, analysis=analysis)
+                right, left = split_piano_midi(target, hands_path, analysis=analysis, vocals_last=include_vocals)
             except (OSError, ValueError) as exc:
                 raise click.ClickException(f'Original MIDI was saved, but hand-track export failed: {exc}') from exc
             click.echo(f'Hand-track MIDI saved to {hands_path} (right: {right}, left: {left}). Review the assignments.')

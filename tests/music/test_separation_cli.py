@@ -124,13 +124,15 @@ class SeparationCliTests(unittest.TestCase):
                 return paths
             def instrument(source, _model, target, *args):
                 midi = mido.MidiFile()
-                midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
-                                                   mido.Message('note_off', note=60, time=480)]))
+                midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=48, velocity=80),
+                                                   mido.Message('note_on', note=72, velocity=80),
+                                                   mido.Message('note_off', note=48, time=480),
+                                                   mido.Message('note_off', note=72)]))
                 midi.save(str(target))
             def combine(source, vocal, instrument_path, output):
                 voice = pretty_midi.PrettyMIDI()
                 vocal_track = pretty_midi.Instrument(program=0)
-                vocal_track.notes.append(pretty_midi.Note(80, 72, 0, .5))
+                vocal_track.notes.append(pretty_midi.Note(80, 80, 0, .5))
                 voice.instruments.append(vocal_track)
                 merge_tracks(instrument_path, voice, str(output) + '.mid')
             with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
@@ -142,12 +144,17 @@ class SeparationCliTests(unittest.TestCase):
                     '--score', '--split-hands', '--score-key', 'C'])
             self.assertEqual(result.exit_code, 0, result.output)
             midi = pretty_midi.PrettyMIDI(str(root / 'result.mid'))
-            self.assertEqual(sorted(n.pitch for track in midi.instruments for n in track.notes), [60, 72])
+            self.assertEqual(sorted(n.pitch for track in midi.instruments for n in track.notes), [48, 72, 80])
             score = ET.parse(root / 'result.musicxml')
             self.assertEqual(len(score.findall('.//part')), 2)
             self.assertEqual([x.text for x in score.findall('.//part-name')], ['Vocals', 'Piano'])
             hands = pretty_midi.PrettyMIDI(str(root / 'result_hands.mid'))
-            self.assertEqual(hands.instruments[0].name, 'Vocals')
+            self.assertEqual(hands.instruments[-1].name, 'Vocals')
+            hand_tracks = [t for t in mido.MidiFile(str(root / 'result_hands.mid')).tracks
+                           if t.name in ('Left hand', 'Right hand', 'Vocals')]
+            active = [(t.name, next(m.channel for m in t if m.type == 'note_on' and m.velocity))
+                      for t in hand_tracks if any(m.type == 'note_on' and m.velocity for m in t)]
+            self.assertEqual(active, [('Left hand', 0), ('Right hand', 1), ('Vocals', 2)])
 
 
     def test_pymss_vocals_and_accompaniment_feed_combined_midi(self):
@@ -197,8 +204,8 @@ class SeparationCliTests(unittest.TestCase):
                 self.assertTrue((root / 'result.mid').is_file())
                 self.assertTrue((root / 'result_accompaniment.wav').is_file())
                 tracks = pretty_midi.PrettyMIDI(str(root / 'result.mid')).instruments
-                self.assertEqual([n.pitch for track in tracks for n in track.notes], [72, 60])
-                self.assertEqual(tracks[0].name, 'Vocals')
+                self.assertEqual([n.pitch for track in tracks for n in track.notes], [60, 72])
+                self.assertEqual(tracks[-1].name, 'Vocals')
                 self.assertFalse((root / 'result_vocals.wav').exists())
 
     def test_selected_stem_transcribed_and_only_saved_when_requested(self):

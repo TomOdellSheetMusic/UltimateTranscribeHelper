@@ -629,7 +629,10 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
     _element(work, 'work-title', Path(source).stem)
     parts = _element(score, 'part-list')
     groups = []
-    for number, (key, entries) in enumerate(sorted(notes.items()), 1):
+    # The combined MIDI places vocals after the instruments for visualizers;
+    # conventional score order places the vocal staff above the piano.
+    ordered_notes = sorted(notes.items(), key=lambda item: (names.get(item[0][0], '').casefold() != 'vocals', item[0]))
+    for number, (key, entries) in enumerate(ordered_notes, 1):
         is_piano = key == piano_key
         indexed = []
         for note_index, (start, end, pitch, velocity) in enumerate(entries):

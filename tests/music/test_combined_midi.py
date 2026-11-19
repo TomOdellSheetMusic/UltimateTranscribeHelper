@@ -24,8 +24,8 @@ class CombinedMidiTests(unittest.TestCase):
             voice.instruments.append(voice_track)
             merge_tracks(piano_path, voice, result_path)
             result = pretty_midi.PrettyMIDI(str(result_path))
-            self.assertEqual([track.name for track in result.instruments], ["Vocals", "Piano"])
-            self.assertAlmostEqual(result.instruments[0].notes[0].start, 1.5, places=2)
+            self.assertEqual([track.name for track in result.instruments], ["Piano", "Vocals"])
+            self.assertAlmostEqual(result.instruments[1].notes[0].start, 1.5, places=2)
 
     def test_no_vocal_notes_is_reported(self):
         with TemporaryDirectory() as temp:
@@ -52,7 +52,7 @@ class CombinedMidiTests(unittest.TestCase):
             with patch('omnizart.desktop.basic_pitch.transcribe', side_effect=predict):
                 add_vocals(root / 'song.wav', root / 'voice.wav', root / 'piano.mid', root / 'result.mid', model='basic-pitch')
             result = pretty_midi.PrettyMIDI(str(root / 'result.mid'))
-            self.assertEqual([part.name for part in result.instruments], ['Vocals', 'Piano'])
+            self.assertEqual([part.name for part in result.instruments], ['Piano', 'Vocals'])
 
 
 if __name__ == "__main__":

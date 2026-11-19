@@ -6,7 +6,7 @@ import warnings
 import mido
 
 
-def split_piano_midi(source, destination, analysis=None):
+def split_piano_midi(source, destination, analysis=None, vocals_last=False):
     """Write right and left hand tracks, retaining original note timing and metadata.
 
     Hand assignment is an estimate. A unique piano part must be identifiable;
@@ -172,6 +172,8 @@ def split_piano_midi(source, destination, analysis=None):
                              analysis.get('pickup_offset', 0))
     elif analysis is not None and (analysis.get('key') or analysis.get('apply_meter')):
         output = _update_metadata(output, analysis.get('key'), analysis['meter'] if analysis.get('apply_meter') else None)
+    if vocals_last:
+        _order_vocal_tracks_last(output)
     with destination.open('xb') as stream:
         try:
             output.save(file=stream)
@@ -180,6 +182,32 @@ def split_piano_midi(source, destination, analysis=None):
             destination.unlink(missing_ok=True)
             raise
     return len(assigned[1]), len(assigned[2])
+
+
+def _order_vocal_tracks_last(midi):
+    """Order generated hands low to high and put vocals last in tracks and channels."""
+    vocals = [track for track in midi.tracks if track.name.casefold() == 'vocals']
+    if not vocals:
+        return
+    left = [track for track in midi.tracks if track.name == 'Left hand']
+    right = [track for track in midi.tracks if track.name == 'Right hand']
+    selected = {id(track) for track in vocals + left + right}
+    other = [track for track in midi.tracks if id(track) not in selected]
+    midi.tracks[:] = other + left + right + vocals
+    channels = []
+    for track in midi.tracks:
+        for msg in track:
+            if msg.type == 'note_on' and msg.velocity and msg.channel != 9 and msg.channel not in channels:
+                channels.append(msg.channel)
+    for track in midi.tracks:
+        for msg in track:
+            if hasattr(msg, 'channel') and msg.channel != 9 and msg.channel not in channels:
+                channels.append(msg.channel)
+    mapping = dict(zip(channels, (channel for channel in range(16) if channel != 9)))
+    for track in midi.tracks:
+        for msg in track:
+            if hasattr(msg, 'channel') and msg.channel != 9:
+                msg.channel = mapping[msg.channel]
 
 
 def _align_midi(midi, grid, meter, overrides=None, key=None, pickup_offset=0):
