@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5 - 2026-11-19
+
+- Make the pymss model browsers prominent for vocal reduction and vocal MIDI.
+- Show first-use runtime installation progress and open the requested browser when ready.
+- Offer vocal separation reuse only when the corresponding step is enabled.
+
 ## 0.6.4 - 2026-11-19
 
 ### Features
