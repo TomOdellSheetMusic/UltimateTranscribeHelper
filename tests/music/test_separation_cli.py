@@ -9,6 +9,196 @@ from omnizart.cli.music.transcribe import transcribe
 
 
 class SeparationCliTests(unittest.TestCase):
+    def test_vocal_track_can_use_pymss_without_reducing_instrument_input(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def isolate(source, base, model, **kwargs):
+                self.assertEqual(Path(source), audio)
+                output = Path(str(base) + '_vocals.wav')
+                output.touch()
+                return [output]
+            with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate) as separator, \
+                 patch('omnizart.cli.music.transcribe._transcribe') as instrument, \
+                 patch('omnizart.desktop.combined.add_vocals') as combine:
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano',
+                    '--output', str(root / 'result'), '--include-vocals',
+                    '--vocal-track-separator', 'pymss', '--vocal-track-pymss-model', 'voice'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(Path(instrument.call_args.args[0]), audio)
+            self.assertEqual(Path(combine.call_args.args[1]).name, 'pymss_vocals.wav')
+            separator.assert_called_once()
+
+    def test_independent_pymss_models_use_original_audio_for_reduction_and_vocal_track(self):
+        import numpy as np
+        import soundfile as sf
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            seen = []
+            def isolate(source, base, model, **kwargs):
+                seen.append((Path(source), model))
+                outputs = [Path(str(base) + '_' + name + '.wav') for name in ('vocals', 'other')]
+                for path, value in zip(outputs, (.1 if model == 'reduction' else .25, .5)):
+                    sf.write(str(path), np.full((20, 2), value, dtype='float32'), 44100, subtype='FLOAT')
+                return outputs
+            def instrument(source, _model, target, *args):
+                data, _ = sf.read(str(source), dtype='float32')
+                np.testing.assert_allclose(data, .5, atol=1e-6)
+            def combine(source, vocal, instrument_path, output):
+                self.assertEqual(Path(source), audio)
+                data, _ = sf.read(str(vocal), dtype='float32')
+                np.testing.assert_allclose(data, .25, atol=1e-6)
+            with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                 patch('omnizart.cli.music.transcribe._transcribe', side_effect=instrument), \
+                 patch('omnizart.desktop.combined.add_vocals', side_effect=combine):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano',
+                    '--output', str(root / 'result'), '--remove-vocals', '--include-vocals',
+                    '--separator', 'pymss', '--reduction-pymss-model', 'reduction',
+                    '--vocal-track-separator', 'pymss', '--vocal-track-pymss-model', 'voice'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(seen, [(audio, 'reduction'), (audio, 'voice')])
+
+    def test_piano_stem_and_vocal_track_reuse_one_pymss_pass(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def isolate(source, base, model, **kwargs):
+                self.assertEqual(Path(source), audio)
+                self.assertIsNone(kwargs['selected_stems'])
+                outputs = [Path(str(base) + '_' + name + '.wav') for name in ('piano', 'vocals')]
+                for path in outputs:
+                    path.write_bytes(path.stem.encode())
+                return outputs
+            def instrument(source, _model, target, *args):
+                self.assertEqual(Path(source).name, 'separated_piano.wav')
+            def combine(source, vocal, instrument_path, output):
+                self.assertEqual(Path(source), audio)
+                self.assertEqual(Path(vocal).name, 'separated_vocals.wav')
+            with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate) as separator, \
+                 patch('omnizart.cli.music.transcribe._transcribe', side_effect=instrument), \
+                 patch('omnizart.desktop.combined.add_vocals', side_effect=combine):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano',
+                    '--output', str(root / 'result'), '--piano-only', '--piano-separator', 'pymss',
+                    '--pymss-model', 'shared', '--include-vocals', '--vocal-track-separator', 'pymss',
+                    '--vocal-track-pymss-model', 'shared'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            separator.assert_called_once()
+
+    def test_six_stem_piano_and_vocals_share_one_pass(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def isolate(source, base, **kwargs):
+                self.assertEqual(Path(source), audio)
+                self.assertEqual(kwargs['selected_stems'], ['piano', 'vocals'])
+                for name in ('piano', 'vocals'):
+                    Path(str(base) + '_' + name + '.wav').touch()
+            with patch('omnizart.desktop.six_stems.separate', side_effect=isolate) as separator, \
+                 patch('omnizart.cli.music.transcribe._transcribe'), \
+                 patch('omnizart.desktop.combined.add_vocals') as combine:
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano',
+                    '--output', str(root / 'result'), '--piano-only', '--include-vocals',
+                    '--vocal-track-separator', 'stem'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            separator.assert_called_once()
+            self.assertEqual(Path(combine.call_args.args[1]).name, 'separated_vocals.wav')
+
+    def test_piano_and_voice_are_combined_in_midi_and_musicxml(self):
+        import mido
+        import pretty_midi
+        from xml.etree import ElementTree as ET
+        from omnizart.desktop.combined import merge_tracks
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / 'song.wav'
+            audio.touch()
+            def isolate(source, base, model, **kwargs):
+                paths = [Path(str(base) + '_' + name + '.wav') for name in ('piano', 'vocals')]
+                for path in paths:
+                    path.touch()
+                return paths
+            def instrument(source, _model, target, *args):
+                midi = mido.MidiFile()
+                midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                                   mido.Message('note_off', note=60, time=480)]))
+                midi.save(str(target))
+            def combine(source, vocal, instrument_path, output):
+                voice = pretty_midi.PrettyMIDI()
+                vocal_track = pretty_midi.Instrument(program=0)
+                vocal_track.notes.append(pretty_midi.Note(80, 72, 0, .5))
+                voice.instruments.append(vocal_track)
+                merge_tracks(instrument_path, voice, str(output) + '.mid')
+            with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                 patch('omnizart.cli.music.transcribe._transcribe', side_effect=instrument), \
+                 patch('omnizart.desktop.combined.add_vocals', side_effect=combine):
+                result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano',
+                    '--output', str(root / 'result'), '--piano-only', '--piano-separator', 'pymss',
+                    '--pymss-model', 'shared', '--include-vocals', '--vocal-track-separator', 'stem',
+                    '--score', '--score-key', 'C'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            midi = pretty_midi.PrettyMIDI(str(root / 'result.mid'))
+            self.assertEqual(sorted(n.pitch for track in midi.instruments for n in track.notes), [60, 72])
+            score = ET.parse(root / 'result.musicxml')
+            self.assertEqual(len(score.findall('.//part')), 2)
+            self.assertIn('Vocals', [x.text for x in score.findall('.//part-name')])
+
+
+    def test_pymss_vocals_and_accompaniment_feed_combined_midi(self):
+        import mido
+        import numpy as np
+        import pretty_midi
+        import soundfile as sf
+        from omnizart.desktop.combined import merge_tracks
+        for device in ('cpu', 'cuda'):
+            with self.subTest(device=device), TemporaryDirectory() as directory:
+                root = Path(directory)
+                audio = root / 'song.wav'
+                audio.touch()
+                def isolate(source, base, model, **kwargs):
+                    self.assertEqual((Path(source), model), (audio, 'vocal-model'))
+                    if device == 'cuda':
+                        self.assertEqual((kwargs['device'], kwargs['gpu_index']), ('cuda', 1))
+                    outputs = [Path(str(base) + '_' + name + '.wav') for name in ('vocals', 'piano', 'drums')]
+                    for path, value in zip(outputs, (.1, .3, .2)):
+                        sf.write(str(path), np.full((20, 2), value, dtype='float32'), 44100, subtype='FLOAT')
+                    return outputs
+                def instrument(source, _model, target, *args):
+                    data, _ = sf.read(str(source), dtype='float32')
+                    np.testing.assert_allclose(data, .5, atol=1e-6)
+                    midi = mido.MidiFile()
+                    midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                                       mido.Message('note_off', note=60, time=480)]))
+                    midi.save(str(target))
+                def combine(_audio, vocal_path, instrument_path, output):
+                    vocals, _ = sf.read(str(vocal_path), dtype='float32')
+                    np.testing.assert_allclose(vocals, .1, atol=1e-6)
+                    voice = pretty_midi.PrettyMIDI()
+                    vocal_track = pretty_midi.Instrument(program=0)
+                    vocal_track.notes.append(pretty_midi.Note(80, 72, 0, .5))
+                    voice.instruments.append(vocal_track)
+                    merge_tracks(instrument_path, voice, str(output) + '.mid')
+                args = [str(audio), '--model-path', 'Piano', '--output', str(root / 'result'),
+                        '--remove-vocals', '--include-vocals', '--separator', 'pymss',
+                        '--pymss-model', 'vocal-model', '--save-accompaniment']
+                if device == 'cuda':
+                    args += ['--pymss-device', 'cuda', '--gpu-index', '1']
+                with patch('omnizart.desktop.pymss_backend.separate', side_effect=isolate), \
+                     patch('omnizart.cli.music.transcribe._transcribe', side_effect=instrument), \
+                     patch('omnizart.desktop.combined.add_vocals', side_effect=combine):
+                    result = CliRunner().invoke(transcribe, args)
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertTrue((root / 'result.mid').is_file())
+                self.assertTrue((root / 'result_accompaniment.wav').is_file())
+                tracks = pretty_midi.PrettyMIDI(str(root / 'result.mid')).instruments
+                self.assertEqual([n.pitch for track in tracks for n in track.notes], [60, 72])
+                self.assertEqual(tracks[-1].name, 'Vocals')
+                self.assertFalse((root / 'result_vocals.wav').exists())
+
     def test_selected_stem_transcribed_and_only_saved_when_requested(self):
         import mido
         for keep in (False, True):

@@ -33,7 +33,10 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--custom-stem-model", type=click.Path(exists=True, dir_okay=False), default=None, help="Compatible six-stem ONNX model.")
 @click.option("--save-accompaniment", is_flag=True, help="Keep the separated accompaniment WAV.")
 @click.option("--include-vocals", is_flag=True, help="Add a separate vocal melody track to the MIDI.")
-@click.option("--separator", type=click.Choice(["spleeter", "uvr", "vocal-ft", "inst-hq4", "inst-hq5"]), default="spleeter", help="Vocal separation model.")
+@click.option("--separator", type=click.Choice(["spleeter", "uvr", "vocal-ft", "inst-hq4", "inst-hq5", "pymss"]), default="spleeter", help="Vocal separation model.")
+@click.option("--reduction-pymss-model", default=None, help="pymss model for vocal reduction; defaults to --pymss-model.")
+@click.option("--vocal-track-separator", type=click.Choice(["spleeter", "uvr", "vocal-ft", "inst-hq4", "inst-hq5", "pymss", "stem"]), default=None, help="Vocal-track separator; 'stem' reuses the selected stem model.")
+@click.option("--vocal-track-pymss-model", default=None, help="pymss model for the vocal track; defaults to the reduction model.")
 @click.option("--uvr-device", type=click.Choice(["cpu", "directml"]), default="cpu", help="Device for audio separation.")
 @click.option("--gpu-index", type=click.IntRange(min=0), default=0, help="DirectML adapter index.")
 @click.option("--compare-midi", type=click.Path(exists=True, dir_okay=False), default=None, help="Compare note onsets with an existing MIDI.")
@@ -59,7 +62,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--clarify-pedal-melody", is_flag=True, help="Shorten notes at the next attack in the same hand when the pedal sustains them.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
-               save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
+               save_accompaniment, include_vocals, separator, reduction_pymss_model, vocal_track_separator, vocal_track_pymss_model, uvr_device, gpu_index,
                compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, prefer_right_octave, move_left_chords, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
     """Transcribe a single audio and output as a MIDI file.
 
@@ -82,6 +85,13 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
     if piano_only and separate_stem:
         raise click.UsageError('Choose either --piano-only or --separate-stem.')
     selected_stem = 'piano' if piano_only else (separate_stem.lower() if separate_stem else None)
+    reduction_model = reduction_pymss_model or pymss_model
+    track_separator = vocal_track_separator or separator
+    track_model = vocal_track_pymss_model or reduction_model
+    if include_vocals and track_separator == 'stem' and not selected_stem:
+        raise click.UsageError('Reusing the stem model requires a selected instrument stem.')
+    if track_separator == 'stem' and piano_separator == 'pymss':
+        track_separator, track_model = 'pymss', pymss_model
     piano_output = (input_is_piano or selected_stem == 'piano' or model_path in
                     ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
     if clarify_pedal_melody:
@@ -99,17 +109,23 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         raise click.UsageError('The selected stem name must contain only letters, digits, underscores or hyphens.')
     if save_separated_stem and not selected_stem:
         raise click.UsageError('--save-separated-stem requires a selected stem.')
-    if selected_stem and (remove_vocals or include_vocals):
-        raise click.UsageError("Stem separation cannot be combined with --remove-vocals or --include-vocals.")
+    if selected_stem and remove_vocals:
+        raise click.UsageError("Choose either vocal reduction or a separated stem for instrument transcription.")
     if input_is_piano and (selected_stem or remove_vocals or include_vocals):
         raise click.UsageError("--input-is-piano cannot be combined with audio separation or a vocal track.")
-    if piano_separator == 'pymss' and selected_stem and (not pymss_model or custom_stem_model or uvr_device != 'cpu'):
+    if piano_separator == 'pymss' and selected_stem and (not pymss_model or custom_stem_model):
         raise click.UsageError('pymss separation requires a model and uses its own runtime.')
-    if pymss_device == 'cuda' and (piano_separator != 'pymss' or not selected_stem):
-        raise click.UsageError('CUDA requires pymss stem separation.')
+    if remove_vocals and separator == 'pymss' and not reduction_model:
+        raise click.UsageError('Choose a pymss model for vocal reduction.')
+    if include_vocals and track_separator == 'pymss' and not track_model:
+        raise click.UsageError('Choose a pymss model for the vocal MIDI track.')
+    if pymss_device == 'cuda' and not ((piano_separator == 'pymss' and selected_stem) or
+                                       (separator == 'pymss' and remove_vocals) or
+                                       (track_separator == 'pymss' and include_vocals)):
+        raise click.UsageError('CUDA requires pymss separation.')
     if selected_stem == 'piano' and model_path in ("Pop", "Stream"):
         click.echo("Piano-only mode works best with a piano model; Pop and Stream may still produce non-piano notes.", err=True)
-    if uvr_device != "cpu" and not (selected_stem or (separator == "uvr" and (remove_vocals or include_vocals))):
+    if uvr_device != "cpu" and not (selected_stem or (separator == "uvr" and remove_vocals) or (track_separator == 'uvr' and include_vocals)):
         raise click.UsageError("DirectML requires piano-only or UVR vocal separation.")
     if model_path in ("Transkun (piano)", "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor"):
         if any(value is not None for value in (onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)):
@@ -129,21 +145,27 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 raise click.ClickException(f'Refusing to overwrite existing separated audio: {saved_stem}')
         with TemporaryDirectory(prefix="omnizart-piano-") as temporary:
             base = Path(temporary) / "separated"
+            shared_outputs = None
             if piano_separator == 'pymss':
                 from omnizart.desktop.pymss_backend import separate as separate_pymss
-                options = dict(selected_stems=[selected_stem], source_name=pymss_source)
+                shared = include_vocals and track_separator == 'pymss' and track_model == pymss_model
+                options = dict(selected_stems=None if shared else [selected_stem], source_name=pymss_source)
                 if pymss_device == 'cuda':
                     options.update(device='cuda', gpu_index=gpu_index)
-                separate_pymss(input_audio, base, pymss_model, **options)
+                shared_outputs = separate_pymss(input_audio, base, pymss_model, **options)
             else:
                 from omnizart.desktop.six_stems import separate as separate_stems
                 options = dict(device=uvr_device, gpu_index=gpu_index)
-                if separate_stem:
+                if include_vocals and track_separator == 'stem':
+                    options['selected_stems'] = list(dict.fromkeys((selected_stem, 'vocals')))
+                elif separate_stem:
                     options['selected_stems'] = [selected_stem]
                 if custom_stem_model:
                     options['custom_model'] = custom_stem_model
                 separate_stems(input_audio, base, **options)
             stem_audio = base.with_name(base.name + '_' + selected_stem + '.wav')
+            if include_vocals and not stem_audio.is_file():
+                raise click.ClickException(f'The selected model did not produce the {selected_stem} stem.')
             if save_separated_stem:
                 created = False
                 try:
@@ -157,31 +179,61 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                         saved_stem.unlink(missing_ok=True)
                     raise
                 click.echo(f'Separated audio saved to {saved_stem}.')
+            instrument_output = Path(temporary) / 'instruments.mid' if include_vocals else output
             if selected_stem == 'piano' and model_path not in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano"):
-                _transcribe_piano_input(str(stem_audio), input_audio, model_path, output,
+                _transcribe_piano_input(str(stem_audio), input_audio, model_path, instrument_output,
                                         onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
+                if include_vocals:
+                    label = model_path.lower() if model_path in ('YourMT3', 'MuScriptor') else 'model'
+                    preserved = instrument_output.with_name(instrument_output.stem + '_' + label + '_multitrack.mid')
+                    destination = _midi_target(output, input_audio)
+                    destination = destination.with_name(destination.stem + '_' + label + '_multitrack.mid')
+                    try:
+                        with preserved.open('rb') as src, destination.open('xb') as dst:
+                            shutil.copyfileobj(src, dst)
+                    except FileExistsError as exc:
+                        raise click.ClickException(f'Refusing to overwrite existing multitrack MIDI: {destination}') from exc
             else:
-                _transcribe(str(stem_audio), model_path, str(_midi_target(output, input_audio)),
+                _transcribe(str(stem_audio), model_path, str(_midi_target(instrument_output, input_audio)),
                             onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
-    elif remove_vocals or include_vocals:
-        from omnizart.desktop.separation import remove_vocals as separate, separate_stems
-        with TemporaryDirectory(prefix="omnizart-separation-") as temporary:
-            separated = Path(temporary) / (Path(input_audio).stem + ".wav")
-            vocal_stem = Path(temporary) / "vocals.wav"
-            if separator == "uvr":
-                from omnizart.desktop.mdx import separate as separate_uvr
-                if uvr_device == "cpu":
-                    separate_uvr(input_audio, separated, vocal_stem if include_vocals else None)
+            if include_vocals:
+                if piano_separator != 'pymss' and track_separator == 'stem':
+                    vocal_stem = base.with_name(base.name + '_vocals.wav')
+                    if not vocal_stem.is_file():
+                        raise click.ClickException('The selected stem model did not produce vocals.')
+                elif piano_separator == 'pymss' and track_separator == 'pymss' and track_model == pymss_model:
+                    from omnizart.desktop.pymss_backend import vocal_stems
+                    try:
+                        vocal_stem = vocal_stems(shared_outputs, base)
+                    except ValueError as exc:
+                        raise click.ClickException('The shared pymss model must output both the chosen stem and vocals: ' + str(exc)) from exc
                 else:
-                    separate_uvr(input_audio, separated, vocal_stem if include_vocals else None,
-                                 device=uvr_device, gpu_index=gpu_index)
-            elif separator in ("vocal-ft", "inst-hq4", "inst-hq5"):
-                from omnizart.desktop.sherpa_uvr import separate as separate_sherpa_uvr
-                separate_sherpa_uvr(separator, input_audio, separated, vocal_stem if include_vocals else None)
-            elif include_vocals:
-                separate_stems(input_audio, separated, vocal_stem)
-            else:
-                separate(input_audio, separated)
+                    from omnizart.desktop.vocal_separation import separate as separate_vocals
+                    try:
+                        _, vocal_stem = separate_vocals(input_audio, Path(temporary) / 'vocal-track', track_separator,
+                            model=track_model, source_name=pymss_source, pymss_device=pymss_device,
+                            uvr_device=uvr_device, gpu_index=gpu_index, accompaniment=False)
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        raise click.ClickException('Vocal-track separation failed: ' + str(exc)) from exc
+                from omnizart.desktop.combined import add_vocals
+                add_vocals(input_audio, vocal_stem, instrument_output, output)
+    elif remove_vocals or include_vocals:
+        from omnizart.desktop.vocal_separation import separate as separate_vocals
+        with TemporaryDirectory(prefix="omnizart-separation-") as temporary:
+            separated = vocal_stem = None
+            shared = (remove_vocals and include_vocals and separator == track_separator and
+                      (separator != 'pymss' or reduction_model == track_model))
+            try:
+                if remove_vocals:
+                    separated, vocal_stem = separate_vocals(input_audio, Path(temporary), separator,
+                        model=reduction_model, source_name=pymss_source, pymss_device=pymss_device,
+                        uvr_device=uvr_device, gpu_index=gpu_index, accompaniment=True, vocals=shared)
+                if include_vocals and not shared:
+                    _, vocal_stem = separate_vocals(input_audio, Path(temporary) / 'vocal-track', track_separator,
+                        model=track_model, source_name=pymss_source, pymss_device=pymss_device,
+                        uvr_device=uvr_device, gpu_index=gpu_index, accompaniment=False, vocals=True)
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise click.ClickException('Vocal separation failed: ' + str(exc)) from exc
             if save_accompaniment:
                 target = Path(output)
                 folder = target if target.is_dir() else target.parent

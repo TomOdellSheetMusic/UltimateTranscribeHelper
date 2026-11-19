@@ -60,6 +60,70 @@ def register(name, architecture, weights, config=None):
     return _capture(*args)
 
 
+def vocal_stems(outputs, output_base, accompaniment_path=None, source=None):
+    """Identify vocals and create accompaniment from the remaining stems.
+
+    A dedicated instrumental stem takes precedence. Otherwise independent
+    non-vocal stems are summed, preserving their relative levels.
+    """
+    prefix = Path(output_base).name + '_'
+    stems = {}
+    for item in outputs:
+        path = Path(item)
+        if not path.stem.startswith(prefix):
+            raise ValueError('pymss returned an unexpected stem filename.')
+        name = path.stem[len(prefix):].casefold()
+        if name in stems:
+            raise ValueError('pymss returned duplicate stem names.')
+        stems[name] = path
+    vocal_names = {'vocals', 'vocal', 'voice', 'voices', 'lead_vocals', 'lead_vocal'}
+    accompaniment_names = {'instrumental', 'instrumentals', 'accompaniment', 'music',
+                           'no_vocals', 'no_vocal', 'non_vocals', 'non_vocal', 'instrumental_mix'}
+    vocals = [path for name, path in stems.items() if name in vocal_names]
+    if len(vocals) != 1:
+        raise ValueError('The selected pymss model must produce one vocals stem. Available: ' + ', '.join(sorted(stems)))
+    if accompaniment_path is None:
+        return vocals[0]
+    dedicated = [path for name, path in stems.items() if name in accompaniment_names]
+    if len(dedicated) > 1:
+        raise ValueError('The selected pymss model produced multiple accompaniment mixes; choose a compatible model.')
+    if dedicated:
+        shutil.copyfile(dedicated[0], accompaniment_path)
+        return vocals[0]
+    components = [path for name, path in stems.items() if name not in vocal_names]
+    import numpy as np
+    import soundfile as sf
+    if not components:
+        if source is None:
+            raise ValueError('The selected pymss model produced only vocals and no source audio was provided.')
+        import librosa
+        vocal_audio, rate = sf.read(str(vocals[0]), dtype='float32', always_2d=True)
+        original, _ = librosa.load(str(source), sr=rate, mono=False, dtype=np.float32)
+        original = np.asarray(original)
+        original = original[:, None] if original.ndim == 1 else original.T
+        if original.shape[1] == 1 and vocal_audio.shape[1] == 2:
+            original = np.repeat(original, 2, axis=1)
+        elif original.shape[1] == 2 and vocal_audio.shape[1] == 1:
+            original = np.mean(original, axis=1, keepdims=True)
+        if original.shape[1] != vocal_audio.shape[1] or abs(len(original) - len(vocal_audio)) > rate * .1:
+            raise ValueError('The source audio and vocal stem differ in channel count or duration.')
+        if len(original) < len(vocal_audio):
+            original = np.pad(original, ((0, len(vocal_audio) - len(original)), (0, 0)))
+        sf.write(str(accompaniment_path), original[:len(vocal_audio)] - vocal_audio, rate, subtype='FLOAT')
+        return vocals[0]
+    audio = []
+    sample_rate = None
+    for path in components:
+        samples, rate = sf.read(str(path), dtype='float32', always_2d=True)
+        if sample_rate is not None and (rate != sample_rate or samples.shape != audio[0].shape):
+            raise ValueError('pymss accompaniment stems have different sample rates or lengths.')
+        sample_rate = rate
+        audio.append(samples)
+    mix = np.sum(np.stack(audio), axis=0, dtype=np.float32)
+    sf.write(str(accompaniment_path), mix, sample_rate, subtype='FLOAT')
+    return vocals[0]
+
+
 def separate(source, output_base, model, selected_stems=None, source_name='huggingface', device='cpu', gpu_index=0):
     """Run pymss and publish selected WAVs without overwriting files."""
     if not model:

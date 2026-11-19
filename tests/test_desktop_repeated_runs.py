@@ -19,6 +19,158 @@ class RepeatedRunsTests(unittest.TestCase):
         self.addCleanup(preferences.stop)
         self.addCleanup(save.stop)
 
+    def test_piano_and_vocal_share_stem_model_and_piano_only_clears_separation(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.music_model.set('Piano')
+                    app.mode_changed()
+                    app.align_bars.set(False)
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.stem_model.set('pymss model')
+                    app.pymss_model.set('shared-model')
+                    app.piano_only_option.invoke()
+                    app.vocal_option.invoke()
+                    self.assertTrue(app.piano_only.get())
+                    self.assertTrue(app.include_vocals.get())
+                    self.assertFalse(app.remove_vocals.get())
+                    self.assertEqual(app.vocal_track_backend.get(), 'Same as selected stem')
+                    app.start()
+                    command, _ = thread.call_args.kwargs['args']
+                    self.assertIn('--piano-only', command)
+                    self.assertIn('--include-vocals', command)
+                    self.assertEqual(command[command.index('--vocal-track-separator') + 1], 'stem')
+                    self.assertNotIn('--remove-vocals', command)
+                    app.output_lock.unlink()
+                    app.input_piano_option.invoke()
+                    self.assertTrue(app.input_is_piano.get())
+                    self.assertFalse(app.piano_only.get())
+                    self.assertFalse(app.include_vocals.get())
+                    self.assertFalse(app.remove_vocals.get())
+                finally:
+                    root.destroy()
+
+    def test_vocal_reduction_and_vocal_track_can_use_different_backends(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.music_model.set('Piano')
+                    app.mode_changed()
+                    app.align_bars.set(False)
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.separation_option.invoke()
+                    app.vocal_option.invoke()
+                    app.vocal_track_backend.set('pymss')
+                    app.vocal_track_pymss_model.set('voice-model')
+                    app.use_gpu.set(True)
+                    app.gpu_index.set('1')
+                    app.update_separation_controls()
+                    app.start()
+                    command, _ = thread.call_args.kwargs['args']
+                    self.assertEqual(command[command.index('--separator') + 1], 'uvr')
+                    self.assertEqual(command[command.index('--vocal-track-separator') + 1], 'pymss')
+                    self.assertEqual(command[command.index('--vocal-track-pymss-model') + 1], 'voice-model')
+                    self.assertEqual(command[command.index('--uvr-device') + 1], 'directml')
+                    self.assertEqual(command[command.index('--pymss-device') + 1], 'cuda')
+                    self.assertEqual(command.count('--gpu-index'), 1)
+                    app.output_lock.unlink()
+                    app.piano_only_option.invoke()
+                    self.assertTrue(app.piano_only.get())
+                    self.assertFalse(app.remove_vocals.get())
+                    self.assertTrue(app.include_vocals.get())
+                finally:
+                    root.destroy()
+
+    def test_vocal_backend_switches_model_controls_and_routes_pymss_cuda(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.music_model.set('Piano')
+                    app.mode_changed()
+                    app.align_bars.set(False)
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.include_vocals.set(True)
+                    app.update_vocal_controls()
+                    app.vocal_backend.set('pymss')
+                    app.vocal_pymss_model.set('vocal-model')
+                    app.use_gpu.set(True)
+                    app.gpu_index.set('1')
+                    app.update_separation_controls()
+                    self.assertEqual(app.separator_picker.winfo_manager(), '')
+                    self.assertEqual(app.vocal_pymss_button.winfo_manager(), 'grid')
+                    self.assertIn('CUDA', app.gpu_option.cget('text'))
+                    app.start()
+                    command, _ = thread.call_args.kwargs['args']
+                    self.assertEqual(command[command.index('--separator') + 1], 'pymss')
+                    self.assertEqual(command[command.index('--reduction-pymss-model') + 1], 'vocal-model')
+                    self.assertEqual(command[command.index('--pymss-device') + 1], 'cuda')
+                    self.assertIn('--include-vocals', command)
+                    self.assertNotIn('--uvr-device', command)
+                    app.output_lock.unlink()
+                    app.vocal_backend.set('Built-in')
+                    app.update_separation_controls()
+                    self.assertEqual(app.vocal_pymss_button.winfo_manager(), '')
+                    self.assertEqual(app.separator_picker.winfo_manager(), 'grid')
+                finally:
+                    root.destroy()
+
+    def test_vocal_model_browser_filters_and_keeps_stem_selection_separate(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            catalog = [{'name': 'piano-model', 'target_stem': 'piano'},
+                       {'name': 'vocal-model', 'target_stem': 'vocals/other'}]
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True), \
+                 patch('omnizart.desktop.pymss_backend.catalog', return_value=catalog):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.stem_model.set('Custom six-stem ONNX')
+                    app.pymss_model.set('existing-stem')
+                    app.vocal_backend.set('pymss')
+                    app.show_pymss_models('vocal')
+                    dialog = next(widget for widget in root.winfo_children() if isinstance(widget, tk.Toplevel))
+                    listing = next(widget for widget in dialog.winfo_children() if isinstance(widget, tk.Listbox))
+                    self.assertEqual(listing.size(), 1)
+                    self.assertIn('vocal-model', listing.get(0))
+                    listing.selection_set(0)
+                    buttons = [child for frame in dialog.winfo_children() for child in frame.winfo_children()
+                               if isinstance(child, tk.ttk.Button) and child.cget('text') == 'Use selected model']
+                    buttons[0].invoke()
+                    self.assertEqual(app.vocal_pymss_model.get(), 'vocal-model')
+                    self.assertEqual(app.pymss_model.get(), 'existing-stem')
+                    self.assertEqual(app.stem_model.get(), 'Custom six-stem ONNX')
+                finally:
+                    root.destroy()
+
     def test_estimated_alignment_is_visible_in_queue(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)

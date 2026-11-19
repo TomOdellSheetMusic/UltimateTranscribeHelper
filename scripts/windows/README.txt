@@ -37,13 +37,19 @@ Basic Pitch is an alternative model for individual instruments and voice. It
 runs on the CPU and is included with the app. Advanced settings change with
 the selected model; hover over a setting for an explanation.
 
-Transkun is an additional CPU piano model. For music containing both voice
-and piano, try "Reduce vocals"; the optional accompaniment WAV lets you hear
-what the separator removed. Separation can also affect the piano, so compare
-the results with and without it. Choose UVR MDX or the legacy Spleeter model
-in the separation model selector; both run offline on CPU. Select "Add a separate vocal track to MIDI"
-to transcribe the sung melody alongside the instruments in one MIDI file.
-This takes longer and both tracks can require editing. Models & import lists the bundled choices,
+Transkun is an additional CPU piano model. For a piano-and-voice recording,
+choose either "Reduce vocals" or "Separate a stem before transcribing" and
+choose Piano. Select "Add a separate vocal track to MIDI" to transcribe the
+separated voice into the same MIDI and optional MusicXML. The vocal track can
+use the reduction model, the selected stem model, or another built-in or
+pymss model. When a shared stem model produces both piano and vocals, one
+separation pass supplies both. All separators use the original recording.
+Enable "Keep accompaniment WAV" or "Keep separated WAV" only if you want the
+corresponding audio saved. For an already isolated piano recording, use "Input
+is already piano only"; it turns off separation. For ensembles, YourMT3 and
+MuScriptor can transcribe a mixture directly; selecting one stem transcribes
+only that stem. Separation and transcription are estimates and can need edits.
+Models & import lists the bundled choices,
 links to their projects and lets you select a complete compatible Omnizart
 music checkpoint folder. Multiple imported checkpoints remain available in
 the model dropdown. Other model formats are not interchangeable.
@@ -127,8 +133,8 @@ The chosen model must produce the requested stem. Separation backends can still
 calculate stems that are not saved. The
 separate custom six-stem ONNX option supports only models compatible with the
 built-in HT-Demucs mix/stems interface and output order, not arbitrary ONNX.
-pymss runs on CPU in its isolated runtime; the existing DirectML option applies
-to the built-in six-stem and UVR models, not pymss.
+pymss runs in its isolated runtime. It can use CPU or an NVIDIA GPU with CUDA;
+the built-in six-stem and UVR models use DirectML for GPU acceleration.
 
 For the project licence see LICENSE. Third-party components retain their own
 licences and notices in the runtime and model directories.

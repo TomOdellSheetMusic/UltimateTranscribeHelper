@@ -281,10 +281,15 @@ class Application(ttk.Frame):
         self.save_separated_stem = tk.BooleanVar(value=False)
         self.include_vocals = tk.BooleanVar(value=False)
         self.separator_model = tk.StringVar(value="UVR MDX (recommended)")
+        self.vocal_backend = tk.StringVar(value="Built-in")
+        self.vocal_track_backend = tk.StringVar(value="Same as vocal reduction")
+        self.vocal_track_model = tk.StringVar(value="UVR MDX (recommended)")
+        self.vocal_track_pymss_model = tk.StringVar(value="")
         self.stem_model = tk.StringVar(value="Built-in six-stem")
         self.stem_choice = tk.StringVar(value="All")
         self.custom_stem_model = tk.StringVar()
         self.pymss_model = tk.StringVar(value="")
+        self.vocal_pymss_model = tk.StringVar(value="")
         self.pymss_source = tk.StringVar(value="huggingface")
         self.use_gpu = tk.BooleanVar(value=False)
         self.gpu_index = tk.StringVar(value="0")
@@ -337,6 +342,10 @@ class Application(ttk.Frame):
             "remove_vocals": self.remove_vocals, "piano_only": self.piano_only,
             "input_is_piano": self.input_is_piano, "save_separated_stem": self.save_separated_stem,
             "include_vocals": self.include_vocals, "separator_model": self.separator_model,
+            "vocal_backend": self.vocal_backend,
+            "vocal_pymss_model": self.vocal_pymss_model,
+            "vocal_track_backend": self.vocal_track_backend, "vocal_track_model": self.vocal_track_model,
+            "vocal_track_pymss_model": self.vocal_track_pymss_model,
             "stem_model": self.stem_model, "stem_choice": self.stem_choice,
             "use_gpu": self.use_gpu, "gpu_index": self.gpu_index,
             "compare_enabled": self.compare_enabled, "compare_path": self.compare_path,
@@ -355,6 +364,8 @@ class Application(ttk.Frame):
         }
         valid_preferences = {
             "mode": set(MODES),
+            "vocal_backend": {"Built-in", "pymss"},
+            "vocal_track_backend": {"Same as vocal reduction", "Same as selected stem", "Built-in", "pymss"},
             "music_model": {"Piano", "PianoV2", "Pop", "Stream", "Basic Pitch", "Transkun (piano)",
                             "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor", *self.custom_models,
                             CUSTOM_MODEL},
@@ -372,6 +383,11 @@ class Application(ttk.Frame):
                         variable.set(str(saved))
                 except (tk.TclError, TypeError):
                     pass
+        if self.separator_model.get() == "PyMSS (choose model below)":
+            self.vocal_backend.set('pymss')
+            self.separator_model.set('UVR MDX (recommended)')
+        if not self.vocal_pymss_model.get() and self.vocal_backend.get() == 'pymss':
+            self.vocal_pymss_model.set(self.pymss_model.get())
         for key, variable in self.thresholds.items():
             if isinstance(preferences.get("thresholds"), dict) and key in preferences["thresholds"]:
                 variable.set(str(preferences["thresholds"][key]))
@@ -469,7 +485,7 @@ class Application(ttk.Frame):
         card = separation_card
         self.separation_option = ttk.Checkbutton(card, text="Reduce vocals before transcribing instruments",
                                                 variable=self.remove_vocals, style="App.TCheckbutton",
-                                                command=self.update_separation_controls)
+                                                command=self.update_reduction_controls)
         self.separation_option.grid(row=8, column=0, sticky="w", pady=(16, 0))
         self.keep_option = ttk.Checkbutton(card, text="Keep accompaniment WAV", variable=self.keep_accompaniment,
                                            style="App.TCheckbutton", state="disabled")
@@ -478,12 +494,13 @@ class Application(ttk.Frame):
                 "but can also remove some instruments or introduce artifacts. Compare both results.")
         self.piano_only_option = ttk.Checkbutton(card, text="Separate a stem before transcribing",
                                                 variable=self.piano_only, style="App.TCheckbutton",
-                                                command=self.update_separation_controls)
+                                                command=self.update_stem_controls)
         self.piano_only_option.grid(row=9, column=0, sticky="w", pady=(4, 0))
         Tooltip(self.piano_only_option, "Runs the selected separation model, then transcribes the chosen stem. "
-                "Select a six-stem or pymss model below. Separation can introduce artifacts.")
+                "Select a six-stem or pymss model below. The vocal MIDI track can use its own separator.")
         self.input_piano_option = ttk.Checkbutton(card, text="Input is already piano only",
-                                                  variable=self.input_is_piano, style="App.TCheckbutton")
+                                                  variable=self.input_is_piano, style="App.TCheckbutton",
+                                                  command=self.update_input_piano_controls)
         self.input_piano_option.grid(row=9, column=1, sticky="w", padx=(14, 0), pady=(4, 0))
         Tooltip(self.input_piano_option, "Use an already isolated piano recording without separation. "
                 "For multi-instrument models, predicted tracks are combined for a piano score and the original MIDI is kept.")
@@ -493,7 +510,12 @@ class Application(ttk.Frame):
         self.vocal_option.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
         Tooltip(self.vocal_option, "Separates and transcribes the sung melody into its own MIDI track. "
                 "This takes longer, and both tracks may need editing.")
-        ttk.Label(card, text="Separation model", style="CardLabel.TLabel").grid(row=11, column=0, sticky="w", pady=(10, 2))
+        self.vocal_backend_label = ttk.Label(card, text="Vocal reduction / shared model backend", style="CardLabel.TLabel")
+        self.vocal_backend_label.grid(row=11, column=0, sticky="w", pady=(10, 2))
+        self.vocal_backend_picker = ttk.Combobox(card, textvariable=self.vocal_backend,
+            values=['Built-in', 'pymss'], state='readonly', style='App.TCombobox')
+        self.vocal_backend_picker.grid(row=11, column=1, sticky='ew', padx=(14, 0), pady=(10, 2))
+        self.vocal_backend_picker.bind('<<ComboboxSelected>>', self.update_separation_controls)
         self.separator_picker = ttk.Combobox(card, textvariable=self.separator_model,
                                              values=["UVR MDX (recommended)", "UVR Vocal FT (CPU)",
                                                      "UVR Instrumental HQ4 (CPU)", "UVR Instrumental HQ5 (CPU)", "Spleeter (legacy)"],
@@ -505,6 +527,35 @@ class Application(ttk.Frame):
         self.separation_models_button = ttk.Button(card, text="Manage separation models...", style="Link.TButton",
                                                    command=self.show_separation_models)
         self.separation_models_button.grid(row=12, column=1, sticky="w", padx=(14, 0))
+        self.vocal_pymss_button = ttk.Button(card, text='Choose pymss model...', style='Link.TButton',
+                                            command=lambda: self.show_pymss_models('vocal'))
+        self.vocal_pymss_button.grid(row=12, column=0, sticky='w')
+        self.vocal_pymss_button.grid_remove()
+        self.vocal_pymss_label = ttk.Label(card, text="", style="CardHint.TLabel")
+        self.vocal_pymss_label.grid(row=14, column=0, columnspan=2, sticky="w")
+        self.vocal_pymss_label.grid_remove()
+        self.vocal_track_settings = ttk.Frame(card, style='Card.TFrame')
+        self.vocal_track_settings.grid(row=15, column=0, columnspan=2, sticky='ew', pady=(10, 0))
+        self.vocal_track_settings.columnconfigure(1, weight=1)
+        ttk.Label(self.vocal_track_settings, text='Vocal MIDI separator', style='CardLabel.TLabel').grid(row=0, column=0, sticky='w')
+        self.vocal_track_backend_picker = ttk.Combobox(self.vocal_track_settings, textvariable=self.vocal_track_backend,
+            values=['Same as vocal reduction', 'Same as selected stem', 'Built-in', 'pymss'], state='readonly', style='App.TCombobox')
+        self.vocal_track_backend_picker.grid(row=0, column=1, sticky='ew', padx=(14, 0))
+        self.vocal_track_backend_picker.bind('<<ComboboxSelected>>', self.update_separation_controls)
+        Tooltip(self.vocal_track_backend_picker, 'Choose a model for the vocal MIDI track. Reuse the selected stem model when it produces both the instrument and vocals; otherwise choose a separate vocal model.')
+        self.vocal_track_picker = ttk.Combobox(self.vocal_track_settings, textvariable=self.vocal_track_model,
+            values=['UVR MDX (recommended)', 'UVR Vocal FT (CPU)', 'UVR Instrumental HQ4 (CPU)',
+                    'UVR Instrumental HQ5 (CPU)', 'Spleeter (legacy)'], state='readonly', style='App.TCombobox')
+        self.vocal_track_picker.grid(row=1, column=0, sticky='ew', pady=(6, 0))
+        self.vocal_track_picker.bind('<<ComboboxSelected>>', self.update_separation_controls)
+        self.vocal_track_manage = ttk.Button(self.vocal_track_settings, text='Manage separation models...',
+            style='Link.TButton', command=lambda: self.show_separation_models('track'))
+        self.vocal_track_manage.grid(row=1, column=1, sticky='w', padx=(14, 0), pady=(6, 0))
+        self.vocal_track_pymss_button = ttk.Button(self.vocal_track_settings, text='Choose pymss model...',
+            style='Link.TButton', command=lambda: self.show_pymss_models('track'))
+        self.vocal_track_pymss_button.grid(row=1, column=0, sticky='w', pady=(6, 0))
+        self.vocal_track_pymss_label = ttk.Label(self.vocal_track_settings, text='', style='CardHint.TLabel')
+        self.vocal_track_pymss_label.grid(row=2, column=0, columnspan=2, sticky='w')
         self.gpu_option = ttk.Checkbutton(card, text="Use GPU for UVR separation (DirectML)",
                                           variable=self.use_gpu, command=self.update_separation_controls,
                                           style="App.TCheckbutton")
@@ -880,6 +931,7 @@ class Application(ttk.Frame):
             self.piano_only_option.configure(state="normal")
             self.input_piano_option.configure(state="normal")
             self.vocal_option.configure(state="normal")
+            self.vocal_backend_picker.configure(state="readonly")
             self.separator_picker.configure(state="readonly")
             self.separation_models_button.configure(state="normal")
             self.compare_option.configure(state="normal")
@@ -961,6 +1013,7 @@ class Application(ttk.Frame):
             self.piano_only_option.configure(state="disabled")
             self.input_piano_option.configure(state="disabled")
             self.vocal_option.configure(state="disabled")
+            self.vocal_backend_picker.configure(state="disabled")
             self.separator_picker.configure(state="disabled")
             self.separation_models_button.configure(state="disabled")
             self.keep_option.configure(state="disabled")
@@ -1010,11 +1063,58 @@ class Application(ttk.Frame):
         self.advanced_button.configure(text="Advanced settings   −" if self.advanced_open else "Advanced settings   +")
 
     def update_separation_controls(self, event=None):
-        enabled = self.mode.get() == "Piano and instruments" and self.remove_vocals.get()
+        music_mode = self.mode.get() == "Piano and instruments"
+        enabled = music_mode and self.remove_vocals.get()
+        track_active = music_mode and self.include_vocals.get()
+        track_same = self.vocal_track_backend.get() == 'Same as vocal reduction'
+        show_vocal_settings = music_mode and (self.remove_vocals.get() or (track_active and track_same))
         self.keep_option.configure(state="normal" if enabled else "disabled")
-        uvr = (self.mode.get() == "Piano and instruments" and
-               (self.remove_vocals.get() or self.include_vocals.get()) and
-               self.separator_model.get() == "UVR MDX (recommended)")
+        pymss_vocals = show_vocal_settings and self.vocal_backend.get() == 'pymss'
+        pymss_track = track_active and self.vocal_track_backend.get() == 'pymss'
+        use_pymss_backend = music_mode and self.vocal_backend.get() == 'pymss'
+        self.vocal_backend_picker.configure(state='readonly' if music_mode else 'disabled')
+        if show_vocal_settings:
+            self.vocal_backend_label.grid()
+            self.vocal_backend_picker.grid()
+        else:
+            self.vocal_backend_label.grid_remove()
+            self.vocal_backend_picker.grid_remove()
+        if show_vocal_settings and use_pymss_backend:
+            self.separator_picker.grid_remove()
+            self.separation_models_button.grid_remove()
+            self.vocal_pymss_button.grid()
+        elif show_vocal_settings:
+            self.separator_picker.grid()
+            self.separation_models_button.grid()
+            self.vocal_pymss_button.grid_remove()
+        else:
+            self.separator_picker.grid_remove()
+            self.separation_models_button.grid_remove()
+            self.vocal_pymss_button.grid_remove()
+        self.vocal_pymss_label.configure(text=("Selected pymss model: " + (self.vocal_pymss_model.get() or "none selected")) if use_pymss_backend else "")
+        if show_vocal_settings and use_pymss_backend:
+            self.vocal_pymss_label.grid()
+        else:
+            self.vocal_pymss_label.grid_remove()
+        if track_active:
+            self.vocal_track_settings.grid()
+        else:
+            self.vocal_track_settings.grid_remove()
+        if track_active and self.vocal_track_backend.get() == 'Built-in':
+            self.vocal_track_picker.grid()
+            self.vocal_track_manage.grid()
+        else:
+            self.vocal_track_picker.grid_remove()
+            self.vocal_track_manage.grid_remove()
+        if pymss_track:
+            self.vocal_track_pymss_button.grid()
+            self.vocal_track_pymss_label.configure(text='Selected pymss model: ' + (self.vocal_track_pymss_model.get() or 'none selected'))
+            self.vocal_track_pymss_label.grid()
+        else:
+            self.vocal_track_pymss_button.grid_remove()
+            self.vocal_track_pymss_label.grid_remove()
+        uvr = ((show_vocal_settings and self.vocal_backend.get() == 'Built-in' and self.separator_model.get() == 'UVR MDX (recommended)') or
+               (track_active and self.vocal_track_backend.get() == 'Built-in' and self.vocal_track_model.get() == 'UVR MDX (recommended)'))
         stems = self.mode.get() == "Separate stems (audio)"
         music_piano = self.mode.get() == 'Piano and instruments' and self.piano_only.get()
         if music_piano:
@@ -1037,15 +1137,43 @@ class Application(ttk.Frame):
             self.stem_choice.set('All')
         self.stem_choice_picker.configure(values=choices)
         piano = self.mode.get() == "Piano and instruments" and self.piano_only.get()
-        pymss_gpu = (stems or piano) and self.stem_model.get() == 'pymss model'
-        self.gpu_option.configure(state="normal" if uvr or stems or piano else "disabled",
-                                  text="Use NVIDIA GPU for separation (CUDA)" if pymss_gpu else "Use GPU for separation (DirectML)" if stems or piano else
+        pymss_gpu = ((stems or piano) and self.stem_model.get() == 'pymss model') or pymss_vocals or pymss_track
+        self.gpu_option.configure(state="normal" if uvr or stems or piano or pymss_vocals or pymss_track else "disabled",
+                                  text="Use NVIDIA GPU for pymss / DirectML for built-in separation" if pymss_gpu and (uvr or ((stems or piano) and self.stem_model.get() != 'pymss model')) else
+                                       "Use NVIDIA GPU for separation (CUDA)" if pymss_gpu else "Use GPU for separation (DirectML)" if stems or piano else
                                        "Use GPU for UVR separation (DirectML)")
-        self.gpu_entry.configure(state="normal" if (uvr or stems or piano) and self.use_gpu.get() else "disabled")
+        self.gpu_entry.configure(state="normal" if (uvr or stems or piano or pymss_vocals or pymss_track) and self.use_gpu.get() else "disabled")
 
     def update_vocal_controls(self):
         if self.include_vocals.get():
-            self.remove_vocals.set(True)
+            self.input_is_piano.set(False)
+            if self.piano_only.get() and self.vocal_track_backend.get() == 'Same as vocal reduction':
+                self.vocal_track_backend.set('Same as selected stem')
+        self.update_separation_controls()
+
+    def update_reduction_controls(self):
+        if self.remove_vocals.get():
+            self.piano_only.set(False)
+            self.input_is_piano.set(False)
+            if self.vocal_track_backend.get() == 'Same as selected stem':
+                self.vocal_track_backend.set('Same as vocal reduction')
+        self.update_separation_controls()
+
+    def update_stem_controls(self):
+        if self.piano_only.get():
+            self.remove_vocals.set(False)
+            self.input_is_piano.set(False)
+            if self.include_vocals.get() and self.vocal_track_backend.get() == 'Same as vocal reduction':
+                self.vocal_track_backend.set('Same as selected stem')
+        elif self.vocal_track_backend.get() == 'Same as selected stem':
+            self.vocal_track_backend.set('Same as vocal reduction')
+        self.update_separation_controls()
+
+    def update_input_piano_controls(self):
+        if self.input_is_piano.get():
+            self.remove_vocals.set(False)
+            self.piano_only.set(False)
+            self.include_vocals.set(False)
         self.update_separation_controls()
 
     def update_smoothing_controls(self):
@@ -1497,7 +1625,7 @@ class Application(ttk.Frame):
             except OSError:
                 pass
 
-    def show_separation_models(self):
+    def show_separation_models(self, target='reduction'):
         dialog = tk.Toplevel(self.master)
         dialog.title("Separation models")
         dialog.configure(bg=BG)
@@ -1511,7 +1639,7 @@ class Application(ttk.Frame):
                   "Different models can produce different results on the same recording.",
                   style="Subtitle.TLabel", wraplength=570, justify="left").pack(anchor="w", pady=(12, 12))
         labels = {"UVR Vocal FT (CPU)": "vocal-ft", "UVR Instrumental HQ4 (CPU)": "inst-hq4", "UVR Instrumental HQ5 (CPU)": "inst-hq5"}
-        current = self.separator_model.get()
+        current = (self.vocal_track_model if target == 'track' else self.separator_model).get()
         selected = tk.StringVar(value=current if current in labels else next(iter(labels)))
         ttk.Combobox(frame, textvariable=selected, values=list(labels), state="readonly",
                      style="App.TCombobox").pack(anchor="w", fill="x", pady=(0, 8))
@@ -1548,7 +1676,7 @@ class Application(ttk.Frame):
                 download.configure(state="normal")
                 import_button.configure(state="normal")
                 if ok:
-                    self.separator_model.set(label)
+                    (self.vocal_track_model if target == 'track' else self.separator_model).set(label)
                     self.update_separation_controls()
                     state.set(label + " is ready and selected.")
                 else:
@@ -1607,7 +1735,8 @@ class Application(ttk.Frame):
             except OSError:
                 self.status.set("Model path could not be saved for next time.")
 
-    def show_pymss_models(self):
+    def show_pymss_models(self, target='stem'):
+        self.pymss_dialog_target = target
         from omnizart.desktop.optional_models import install, ready
         if not ready('pymss'):
             if self.optional_installing:
@@ -1632,6 +1761,7 @@ class Application(ttk.Frame):
         dialog.title('pymss models')
         dialog.geometry('760x500')
         search = tk.StringVar()
+        vocal_filter = tk.BooleanVar(value=target in ('vocal', 'track'))
         ttk.Label(dialog, text='Search models by name or category').pack(anchor='w', padx=12, pady=(12, 0))
         ttk.Entry(dialog, textvariable=search).pack(fill='x', padx=12, pady=6)
         source_row = ttk.Frame(dialog)
@@ -1639,6 +1769,8 @@ class Application(ttk.Frame):
         ttk.Label(source_row, text='Download source').pack(side='left', padx=(0, 8))
         ttk.Combobox(source_row, textvariable=self.pymss_source, values=['huggingface', 'modelscope', 'hf-mirror'],
                      state='readonly', width=15).pack(side='left')
+        if target in ('vocal', 'track'):
+            ttk.Checkbutton(source_row, text='Show vocal models only', variable=vocal_filter).pack(side='left', padx=(16, 0))
         listing = tk.Listbox(dialog, exportselection=False)
         listing.pack(fill='both', expand=True, padx=12)
         visible = []
@@ -1648,11 +1780,15 @@ class Application(ttk.Frame):
             query = search.get().casefold()
             for item in entries:
                 name = str(item['name'])
+                stem = str(item.get('target_stem', '')).casefold()
+                if vocal_filter.get() and not any(word in stem for word in ('vocal', 'voice')):
+                    continue
                 detail = f"{name}  |  {item.get('primary_category', '')}  |  {item.get('target_stem', '')}"
                 if query in detail.casefold():
                     visible.append(name)
                     listing.insert('end', detail)
         search.trace_add('write', refresh)
+        vocal_filter.trace_add('write', refresh)
         refresh()
         def selected():
             selection = listing.curselection()
@@ -1660,8 +1796,9 @@ class Application(ttk.Frame):
         def choose():
             name = selected()
             if name:
-                self.pymss_model.set(name)
-                self.stem_model.set('pymss model')
+                (self.vocal_track_pymss_model if target == 'track' else self.vocal_pymss_model if target == 'vocal' else self.pymss_model).set(name)
+                if target == 'stem':
+                    self.stem_model.set('pymss model')
                 self.update_separation_controls()
                 self.remember_pymss_choice()
                 self.status.set(f'pymss model selected: {name}')
@@ -1684,9 +1821,9 @@ class Application(ttk.Frame):
         buttons.pack(fill='x', padx=12, pady=12)
         ttk.Button(buttons, text='Use selected model', command=choose).pack(side='left')
         ttk.Button(buttons, text='Download selected', command=download).pack(side='left', padx=6)
-        ttk.Button(buttons, text='Import custom model...', command=lambda: self.import_pymss_model(dialog)).pack(side='left')
+        ttk.Button(buttons, text='Import custom model...', command=lambda: self.import_pymss_model(dialog, target)).pack(side='left')
 
-    def import_pymss_model(self, parent):
+    def import_pymss_model(self, parent, target='stem'):
         from tkinter import simpledialog
         from omnizart.desktop.pymss_backend import register
         weights = filedialog.askopenfilename(parent=parent, title='Choose pymss model weights')
@@ -1705,8 +1842,9 @@ class Application(ttk.Frame):
         except (OSError, RuntimeError, ValueError) as exc:
             messagebox.showerror('Custom pymss model', str(exc), parent=parent)
             return
-        self.pymss_model.set(name)
-        self.stem_model.set('pymss model')
+        (self.vocal_track_pymss_model if target == 'track' else self.vocal_pymss_model if target == 'vocal' else self.pymss_model).set(name)
+        if target == 'stem':
+            self.stem_model.set('pymss model')
         self.update_separation_controls()
         self.remember_pymss_choice()
         self.status.set(f'Custom pymss model registered: {name}')
@@ -1749,6 +1887,12 @@ class Application(ttk.Frame):
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)
         if mode == "music" and self.input_is_piano.get() and (self.piano_only.get() or self.remove_vocals.get() or self.include_vocals.get()):
             messagebox.showerror("Piano input", "Already-isolated piano cannot be combined with separation or a vocal track. Turn those options off.")
+            return
+        if mode == 'music' and self.piano_only.get() and self.remove_vocals.get():
+            messagebox.showerror('Separation options', 'Choose either vocal reduction or a single stem for instrument transcription.')
+            return
+        if mode == 'music' and self.include_vocals.get() and self.vocal_track_backend.get() == 'Same as selected stem' and not self.piano_only.get():
+            messagebox.showerror('Vocal MIDI separator', 'Select a stem to transcribe, or choose another vocal MIDI separator.')
             return
         if mode == 'music' and self.piano_only.get() and self.stem_choice.get().strip().lower() in ('', 'all'):
             messagebox.showerror('Stem selection', 'Choose one stem to transcribe.')
@@ -1877,9 +2021,40 @@ class Application(ttk.Frame):
                 messagebox.showerror("Six-stem model", "Open Models & import to download or import the six-stem model.")
                 return
         optional_separators = {"UVR Vocal FT (CPU)": "vocal-ft", "UVR Instrumental HQ4 (CPU)": "inst-hq4", "UVR Instrumental HQ5 (CPU)": "inst-hq5"}
-        if mode == "music" and (self.remove_vocals.get() or self.include_vocals.get()) and self.separator_model.get() in optional_separators:
+        uses_reduction = mode == 'music' and (self.remove_vocals.get() or
+            (self.include_vocals.get() and self.vocal_track_backend.get() == 'Same as vocal reduction'))
+        uses_track_pymss = mode == 'music' and self.include_vocals.get() and self.vocal_track_backend.get() == 'pymss'
+        if (uses_reduction and self.vocal_backend.get() == 'pymss') or uses_track_pymss:
+            from omnizart.desktop.optional_models import install, ready
+            missing_reduction = uses_reduction and self.vocal_backend.get() == 'pymss' and not self.vocal_pymss_model.get().strip()
+            missing_track = uses_track_pymss and not self.vocal_track_pymss_model.get().strip()
+            if not ready('pymss') or missing_reduction or missing_track:
+                messagebox.showerror('PyMSS model', 'Choose a PyMSS model with Choose PyMSS model before starting.')
+                return
+            if self.use_gpu.get() and not ready('pymss CUDA'):
+                if self.optional_installing:
+                    return
+                self.optional_installing = True
+                self.start_button.configure(state='disabled')
+                self.status.set('Installing NVIDIA CUDA runtime for PyMSS; this may take several minutes...')
+                def install_vocal_pymss_cuda():
+                    try:
+                        install('pymss CUDA')
+                        self.messages.put(('optional_install_done', ('pymss CUDA', 0, '')))
+                    except Exception as exc:
+                        self.messages.put(('optional_install_done', ('pymss CUDA', 1, str(exc))))
+                threading.Thread(target=install_vocal_pymss_cuda, daemon=True).start()
+                return
+        builtin_models = []
+        if uses_reduction and self.vocal_backend.get() == 'Built-in':
+            builtin_models.append(self.separator_model.get())
+        if mode == 'music' and self.include_vocals.get() and self.vocal_track_backend.get() == 'Built-in':
+            builtin_models.append(self.vocal_track_model.get())
+        for builtin_model in builtin_models:
+            if builtin_model not in optional_separators:
+                continue
             from omnizart.desktop.sherpa_uvr import model_path
-            if not model_path(optional_separators[self.separator_model.get()]).is_file():
+            if not model_path(optional_separators[builtin_model]).is_file():
                 messagebox.showerror("Separation model", "Use Manage separation models to download or import the selected model.")
                 return
         try:
@@ -1888,8 +2063,10 @@ class Application(ttk.Frame):
                 values["instrument"] = ""
             options = music_options(values, self.music_model.get()) if mode == "music" else []
             gpu_enabled = (self.use_gpu.get() and ((mode == "stems") or (mode == "music" and self.piano_only.get()) or
-                           (mode == "music" and (self.remove_vocals.get() or self.include_vocals.get()) and
-                            self.separator_model.get() == "UVR MDX (recommended)")))
+                           (uses_reduction and (self.vocal_backend.get() == 'pymss' or self.separator_model.get() == 'UVR MDX (recommended)')) or
+                           (mode == 'music' and self.include_vocals.get() and
+                            (self.vocal_track_backend.get() == 'pymss' or
+                             (self.vocal_track_backend.get() == 'Built-in' and self.vocal_track_model.get() == 'UVR MDX (recommended)')))))
             gpu_index = self.gpu_index.get().strip()
             if gpu_enabled and (not gpu_index.isdecimal() or int(gpu_index) > 99):
                 raise ValueError("GPU index must be a whole number between 0 and 99.")
@@ -2008,12 +2185,33 @@ class Application(ttk.Frame):
                 cmd.append("--clarify-pedal-melody")
             if self.include_vocals.get():
                 cmd.append("--include-vocals")
-            if self.include_vocals.get() or self.remove_vocals.get():
-                separator = {"UVR MDX (recommended)": "uvr", "UVR Vocal FT (CPU)": "vocal-ft",
-                             "UVR Instrumental HQ4 (CPU)": "inst-hq4", "UVR Instrumental HQ5 (CPU)": "inst-hq5", "Spleeter (legacy)": "spleeter"}[self.separator_model.get()]
+            separator = None
+            if uses_reduction:
+                separator = ('pymss' if self.vocal_backend.get() == 'pymss' else
+                             {"UVR MDX (recommended)": "uvr", "UVR Vocal FT (CPU)": "vocal-ft",
+                              "UVR Instrumental HQ4 (CPU)": "inst-hq4", "UVR Instrumental HQ5 (CPU)": "inst-hq5", "Spleeter (legacy)": "spleeter"}[self.separator_model.get()])
                 cmd.extend(["--separator", separator])
-                if gpu_enabled and not self.piano_only.get():
-                    cmd.extend(["--uvr-device", "directml", "--gpu-index", gpu_index])
+                if separator == 'pymss':
+                    cmd.extend(['--reduction-pymss-model', self.vocal_pymss_model.get().strip()])
+            track_separator = None
+            if self.include_vocals.get() and self.vocal_track_backend.get() != 'Same as vocal reduction':
+                track_separator = ('stem' if self.vocal_track_backend.get() == 'Same as selected stem' else
+                    'pymss' if self.vocal_track_backend.get() == 'pymss' else
+                    {"UVR MDX (recommended)": "uvr", "UVR Vocal FT (CPU)": "vocal-ft",
+                     "UVR Instrumental HQ4 (CPU)": "inst-hq4", "UVR Instrumental HQ5 (CPU)": "inst-hq5", "Spleeter (legacy)": "spleeter"}[self.vocal_track_model.get()])
+                cmd.extend(['--vocal-track-separator', track_separator])
+                if track_separator == 'pymss':
+                    cmd.extend(['--vocal-track-pymss-model', self.vocal_track_pymss_model.get().strip()])
+            uses_pymss = (self.piano_only.get() and self.stem_model.get() == 'pymss model') or separator == 'pymss' or track_separator == 'pymss'
+            if uses_pymss and '--pymss-source' not in cmd:
+                cmd.extend(['--pymss-source', self.pymss_source.get()])
+            if gpu_enabled:
+                if uses_pymss and '--pymss-device' not in cmd:
+                    cmd.extend(['--pymss-device', 'cuda'])
+                if (separator == 'uvr' or track_separator == 'uvr') and '--uvr-device' not in cmd:
+                    cmd.extend(['--uvr-device', 'directml'])
+                if '--gpu-index' not in cmd:
+                    cmd.extend(['--gpu-index', gpu_index])
             if self.remove_vocals.get():
                 cmd.append("--remove-vocals")
                 if self.keep_accompaniment.get():
@@ -2104,7 +2302,7 @@ class Application(ttk.Frame):
                         messagebox.showerror('pymss setup failed', value)
                     else:
                         self.status.set('pymss is ready.')
-                        self.show_pymss_models()
+                        self.show_pymss_models(getattr(self, 'pymss_dialog_target', 'stem'))
                     continue
                 if kind == 'pymss_model_done':
                     name, error = value

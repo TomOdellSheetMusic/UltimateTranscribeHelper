@@ -11,6 +11,51 @@ from omnizart.desktop import pymss_backend
 
 
 class PymssTests(unittest.TestCase):
+    def test_vocal_only_model_reconstructs_accompaniment_from_source(self):
+        import numpy as np
+        import soundfile as sf
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, vocal, output = root / 'input.wav', root / 'result_vocals.wav', root / 'accompaniment.wav'
+            sf.write(str(source), np.full((100, 2), .7, dtype='float32'), 44100, subtype='FLOAT')
+            sf.write(str(vocal), np.full((100, 2), .2, dtype='float32'), 44100, subtype='FLOAT')
+            self.assertEqual(pymss_backend.vocal_stems([vocal], root / 'result', output, source), vocal)
+            np.testing.assert_allclose(sf.read(str(output), dtype='float32')[0], .5, atol=1e-6)
+
+    def test_vocal_stems_recognize_no_vocals_and_sum_multistem_accompaniment(self):
+        import numpy as np
+        import soundfile as sf
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / 'result'
+            vocals, piano, drums = [root / ('result_' + name + '.wav') for name in ('vocals', 'piano', 'drums')]
+            for path, value in ((vocals, .1), (piano, .3), (drums, .2)):
+                sf.write(str(path), np.full((20, 2), value, dtype='float32'), 44100, subtype='FLOAT')
+            combined = root / 'combined.wav'
+            self.assertEqual(pymss_backend.vocal_stems([vocals, piano, drums], base, combined), vocals)
+            samples, rate = sf.read(str(combined), dtype='float32', always_2d=True)
+            self.assertEqual(rate, 44100)
+            np.testing.assert_allclose(samples, .5, atol=1e-6)
+            instrumental = root / 'result_no_vocals.wav'
+            sf.write(str(instrumental), np.full((20, 2), .7, dtype='float32'), 44100, subtype='FLOAT')
+            mixed = root / 'dedicated.wav'
+            self.assertEqual(pymss_backend.vocal_stems([vocals, piano, instrumental], base, mixed), vocals)
+            np.testing.assert_allclose(sf.read(str(mixed), dtype='float32')[0], .7, atol=1e-6)
+
+    def test_vocal_stems_reject_missing_vocals_or_mismatched_components(self):
+        import numpy as np
+        import soundfile as sf
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / 'result'
+            vocals, piano, drums = [root / ('result_' + name + '.wav') for name in ('vocals', 'piano', 'drums')]
+            for path, length in ((vocals, 20), (piano, 20), (drums, 10)):
+                sf.write(str(path), np.zeros((length, 2), dtype='float32'), 44100)
+            with self.assertRaisesRegex(ValueError, 'vocals stem'):
+                pymss_backend.vocal_stems([piano, drums], base, root / 'out.wav')
+            with self.assertRaisesRegex(ValueError, 'different sample rates or lengths'):
+                pymss_backend.vocal_stems([vocals, piano, drums], base, root / 'out.wav')
+
     def test_cuda_probe_and_device_are_forwarded(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
