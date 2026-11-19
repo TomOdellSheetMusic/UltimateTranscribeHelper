@@ -136,7 +136,7 @@ class HandMidiTests(unittest.TestCase):
                               int(n.findtext('staff')) for n in xml.findall('.//note[pitch]')}
             self.assertEqual((staff_by_pitch[72], staff_by_pitch[48]), (1, 2))
 
-    def test_alignment_failure_does_not_silently_export_unaligned_midi(self):
+    def test_alignment_failure_saves_estimated_midi_with_warning(self):
         with TemporaryDirectory() as folder:
             audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
             audio.touch()
@@ -146,10 +146,11 @@ class HandMidiTests(unittest.TestCase):
                  patch('omnizart.desktop.beat_alignment.detect', side_effect=RuntimeError('tracker failed')):
                 result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output), '--model-path', 'Piano',
                                                                '--split-hands', '--align-bars'])
-            self.assertNotEqual(result.exit_code, 0)
-            self.assertIn('audio bar alignment failed', result.output)
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn('Audio bar alignment unavailable', result.output)
+            self.assertIn('constant-tempo grid', result.output)
             self.assertTrue(output.with_suffix('.mid').is_file())
-            self.assertFalse(output.with_name('result_hands.mid').exists())
+            self.assertTrue(output.with_name('result_hands.mid').is_file())
 
     def test_score_render_failure_still_saves_final_midi_after_analysis(self):
         with TemporaryDirectory() as folder:

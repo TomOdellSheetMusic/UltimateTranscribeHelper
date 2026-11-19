@@ -19,6 +19,36 @@ class RepeatedRunsTests(unittest.TestCase):
         self.addCleanup(preferences.stop)
         self.addCleanup(save.stop)
 
+    def test_estimated_alignment_is_visible_in_queue(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread:
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.music_model.set('Piano')
+                    app.mode_changed()
+                    app.align_bars.set(False)
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.enqueue_current()
+                    command, result_folder = thread.call_args.kwargs['args']
+                    base = Path(command[command.index('--output') + 1])
+                    midi = mido.MidiFile()
+                    midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80)]))
+                    midi.save(str(base) + '.mid')
+                    app.messages.put(('log', 'UserWarning: Audio bar alignment unavailable; using a constant-tempo grid.\n'))
+                    app.messages.put(('done', (0, result_folder)))
+                    app.poll()
+                    self.assertEqual(app.jobs[0]['state'], 'Review timing')
+                    self.assertIn('Timing was estimated', app.status.get())
+                finally:
+                    root.destroy()
+
     def test_neural_and_alignment_produce_final_midi_without_musicxml(self):
         with TemporaryDirectory() as directory:
             folder = Path(directory)

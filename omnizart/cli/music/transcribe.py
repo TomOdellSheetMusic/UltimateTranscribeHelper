@@ -261,9 +261,9 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         if split_hands:
             if not analysis.get('hands'):
                 raise click.ClickException('Original MIDI was saved, but hand splitting requires one piano instrument.')
-            if align_bars and analysis.get('grid') is None:
-                raise click.ClickException('Original MIDI was saved, but audio bar alignment failed; no aligned hand MIDI was created.')
-            if analysis.get('grid') is None and (score or score_tempo is not None or simplify_score):
+            if analysis.get('alignment_warning'):
+                click.echo('Warning: ' + analysis['alignment_warning'], err=True)
+            if analysis.get('grid') is None and (score or align_bars or score_tempo is not None or simplify_score):
                 from omnizart.desktop.beat_grid import BeatGrid
                 bpm = analysis['tempo']
                 period = 60 / bpm

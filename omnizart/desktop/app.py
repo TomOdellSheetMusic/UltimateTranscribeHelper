@@ -2094,7 +2094,10 @@ class Application(ttk.Frame):
                     if self.score_warnings:
                         job['log'] += '\nScore review:\n' + '\n'.join(self.score_warnings) + '\n'
                     good = kind == 'done' and value[0] == 0 and self.status.get().startswith('Finished.')
-                    self._update_job(job, 'Finished' if good else 'Needs attention')
+                    timing_review = good and any('Audio bar alignment unavailable' in warning for warning in self.score_warnings)
+                    if timing_review:
+                        self.status.set('Finished. Timing was estimated; review the bar alignment in details.')
+                    self._update_job(job, 'Review timing' if timing_review else 'Finished' if good else 'Needs attention')
                     self.active_job = None
                     self._show_selected_job()
                 self.after_idle(self._start_next_job)

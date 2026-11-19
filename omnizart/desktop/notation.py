@@ -500,6 +500,8 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             raise ValueError('Beats per bar must be 3 or 4.')
         numerator, denominator = beats_per_bar, 4
     grid = None
+    alignment_warning = None
+    downbeats = []
     if align_bars:
         if audio is None:
             raise ValueError('Audio is required for automatic bar alignment.')
@@ -517,13 +519,27 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             if beats_per_bar is None and not grid.meter_detected:
                 warnings.warn(f'Audio bar alignment could not confidently infer the meter; using {numerator}/4. Review the score.', UserWarning)
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            warnings.warn(f'Audio bar alignment unavailable ({exc}); score uses a constant-tempo grid instead.', UserWarning)
-            if downbeat is not None and denominator == 4 and numerator in (3, 4):
+            if denominator == 4 and numerator in (3, 4):
                 from omnizart.desktop.beat_grid import BeatGrid
                 period = 60 / bpm
-                grid = BeatGrid([i * period for i in range(4)], [], fallback_meter=numerator if denominator == 4 else 4,
-                                tempo=bpm, downbeat=downbeat)
+                detected = None
+                for value in downbeats:
+                    try:
+                        candidate = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if math.isfinite(candidate) and candidate >= 0:
+                        detected = candidate
+                        break
+                anchor = downbeat if downbeat is not None else detected if detected is not None else 0
+                origin = 'the specified downbeat' if downbeat is not None else 'an estimated downbeat' if detected is not None else 'an assumed start at zero'
+                grid = BeatGrid([i * period for i in range(4)], [], fallback_meter=numerator,
+                                tempo=bpm, downbeat=anchor, meter=beats_per_bar)
                 numerator, denominator = grid.meter, 4
+                alignment_warning = f'Audio bar alignment unavailable ({exc}); using a constant-tempo grid at {bpm:g} BPM with {origin}. Review the timing and bar lines.'
+            else:
+                alignment_warning = f'Audio bar alignment unavailable ({exc}); score uses a constant-tempo grid instead. Review the timing and bar lines.'
+            warnings.warn(alignment_warning, UserWarning)
     elif downbeat is not None:
         if denominator != 4 or numerator not in (3, 4):
             raise ValueError('Manual bar alignment currently supports 3/4 and 4/4 scores.')
@@ -596,7 +612,7 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             for staff, assigned in staff_notes.items():
                 for note in assigned:
                     hands[indices[note].popleft()] = staff
-            analysis_out.update(hands=hands, positions=positions, grid=grid, tempo=bpm, meter=(numerator, denominator), key=score_key, piano_key=key)
+            analysis_out.update(hands=hands, positions=positions, grid=grid, tempo=bpm, meter=(numerator, denominator), key=score_key, piano_key=key, alignment_warning=alignment_warning)
         elif analysis_out is not None:
             positions = [None] * len(entries)
             remaining = defaultdict(deque)

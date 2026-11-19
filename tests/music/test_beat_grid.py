@@ -102,6 +102,21 @@ class BeatGridTests(unittest.TestCase):
                     export_score(source, target, audio='song.wav', align_bars=True)
             self.assertTrue(target.is_file())
 
+    def test_irregular_beats_use_explicit_estimated_fallback(self):
+        with TemporaryDirectory() as folder:
+            source, target = Path(folder) / 'in.mid', Path(folder) / 'out.musicxml'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=90),
+                                               mido.Message('note_off', note=60, time=480)]))
+            midi.save(source)
+            analysis = {}
+            with patch('omnizart.desktop.beat_alignment.detect', return_value=([0, .3, .42, .6, .9], [.3])):
+                with self.assertWarnsRegex(UserWarning, 'constant-tempo grid'):
+                    export_score(source, target, audio='song.wav', align_bars=True, analysis_out=analysis)
+            self.assertIsNotNone(analysis['grid'])
+            self.assertAlmostEqual(analysis['grid'].anchor, .3)
+            self.assertIn('Review the timing', analysis['alignment_warning'])
+
 
 if __name__ == '__main__':
     unittest.main()
