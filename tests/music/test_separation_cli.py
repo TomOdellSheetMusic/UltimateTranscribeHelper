@@ -139,13 +139,15 @@ class SeparationCliTests(unittest.TestCase):
                 result = CliRunner().invoke(transcribe, [str(audio), '--model-path', 'Piano',
                     '--output', str(root / 'result'), '--piano-only', '--piano-separator', 'pymss',
                     '--pymss-model', 'shared', '--include-vocals', '--vocal-track-separator', 'stem',
-                    '--score', '--score-key', 'C'])
+                    '--score', '--split-hands', '--score-key', 'C'])
             self.assertEqual(result.exit_code, 0, result.output)
             midi = pretty_midi.PrettyMIDI(str(root / 'result.mid'))
             self.assertEqual(sorted(n.pitch for track in midi.instruments for n in track.notes), [60, 72])
             score = ET.parse(root / 'result.musicxml')
             self.assertEqual(len(score.findall('.//part')), 2)
-            self.assertIn('Vocals', [x.text for x in score.findall('.//part-name')])
+            self.assertEqual([x.text for x in score.findall('.//part-name')], ['Vocals', 'Piano'])
+            hands = pretty_midi.PrettyMIDI(str(root / 'result_hands.mid'))
+            self.assertEqual(hands.instruments[0].name, 'Vocals')
 
 
     def test_pymss_vocals_and_accompaniment_feed_combined_midi(self):
@@ -195,8 +197,8 @@ class SeparationCliTests(unittest.TestCase):
                 self.assertTrue((root / 'result.mid').is_file())
                 self.assertTrue((root / 'result_accompaniment.wav').is_file())
                 tracks = pretty_midi.PrettyMIDI(str(root / 'result.mid')).instruments
-                self.assertEqual([n.pitch for track in tracks for n in track.notes], [60, 72])
-                self.assertEqual(tracks[-1].name, 'Vocals')
+                self.assertEqual([n.pitch for track in tracks for n in track.notes], [72, 60])
+                self.assertEqual(tracks[0].name, 'Vocals')
                 self.assertFalse((root / 'result_vocals.wav').exists())
 
     def test_selected_stem_transcribed_and_only_saved_when_requested(self):

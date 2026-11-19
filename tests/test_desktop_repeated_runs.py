@@ -80,6 +80,7 @@ class RepeatedRunsTests(unittest.TestCase):
                     app.vocal_option.invoke()
                     app.vocal_track_backend.set('pymss')
                     app.vocal_track_pymss_model.set('voice-model')
+                    app.vocal_transcription_model.set('Basic Pitch')
                     app.use_gpu.set(True)
                     app.gpu_index.set('1')
                     app.update_separation_controls()
@@ -88,6 +89,7 @@ class RepeatedRunsTests(unittest.TestCase):
                     self.assertEqual(command[command.index('--separator') + 1], 'uvr')
                     self.assertEqual(command[command.index('--vocal-track-separator') + 1], 'pymss')
                     self.assertEqual(command[command.index('--vocal-track-pymss-model') + 1], 'voice-model')
+                    self.assertEqual(command[command.index('--vocal-transcription-model') + 1], 'basic-pitch')
                     self.assertEqual(command[command.index('--uvr-device') + 1], 'directml')
                     self.assertEqual(command[command.index('--pymss-device') + 1], 'cuda')
                     self.assertEqual(command.count('--gpu-index'), 1)
@@ -96,6 +98,37 @@ class RepeatedRunsTests(unittest.TestCase):
                     self.assertTrue(app.piano_only.get())
                     self.assertFalse(app.remove_vocals.get())
                     self.assertTrue(app.include_vocals.get())
+                finally:
+                    root.destroy()
+
+    def test_rosvot_gpu_is_independent_of_separation_gpu(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            audio = folder / 'song.wav'
+            audio.touch()
+            with patch('omnizart.desktop.app.folder_settings_path', return_value=folder / 'folders.json'), \
+                 patch('omnizart.desktop.app.threading.Thread') as thread, \
+                 patch('omnizart.desktop.optional_models.ready', return_value=True):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = Application(root)
+                    app.music_model.set('Piano')
+                    app.mode_changed()
+                    app.align_bars.set(False)
+                    app.source.set(str(audio))
+                    app.destination.set(str(folder))
+                    app.vocal_option.invoke()
+                    app.vocal_transcription_model.set('ROSVOT')
+                    app.rosvot_gpu.set(True)
+                    app.update_separation_controls()
+                    self.assertEqual(app.rosvot_gpu_option.winfo_manager(), 'grid')
+                    app.start()
+                    command, _ = thread.call_args.kwargs['args']
+                    self.assertEqual(command[command.index('--vocal-transcription-model') + 1], 'rosvot')
+                    self.assertEqual(command[command.index('--vocal-transcription-device') + 1], 'cuda')
+                    self.assertNotIn('--uvr-device', command)
+                    app.output_lock.unlink()
                 finally:
                     root.destroy()
 

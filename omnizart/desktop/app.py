@@ -284,6 +284,8 @@ class Application(ttk.Frame):
         self.vocal_backend = tk.StringVar(value="Built-in")
         self.vocal_track_backend = tk.StringVar(value="Same as vocal reduction")
         self.vocal_track_model = tk.StringVar(value="UVR MDX (recommended)")
+        self.vocal_transcription_model = tk.StringVar(value="Omnizart Vocal")
+        self.rosvot_gpu = tk.BooleanVar(value=False)
         self.vocal_track_pymss_model = tk.StringVar(value="")
         self.stem_model = tk.StringVar(value="Built-in six-stem")
         self.stem_choice = tk.StringVar(value="All")
@@ -346,6 +348,8 @@ class Application(ttk.Frame):
             "vocal_pymss_model": self.vocal_pymss_model,
             "vocal_track_backend": self.vocal_track_backend, "vocal_track_model": self.vocal_track_model,
             "vocal_track_pymss_model": self.vocal_track_pymss_model,
+            "vocal_transcription_model": self.vocal_transcription_model,
+            "rosvot_gpu": self.rosvot_gpu,
             "stem_model": self.stem_model, "stem_choice": self.stem_choice,
             "use_gpu": self.use_gpu, "gpu_index": self.gpu_index,
             "compare_enabled": self.compare_enabled, "compare_path": self.compare_path,
@@ -366,6 +370,7 @@ class Application(ttk.Frame):
             "mode": set(MODES),
             "vocal_backend": {"Built-in", "pymss"},
             "vocal_track_backend": {"Same as vocal reduction", "Same as selected stem", "Built-in", "pymss"},
+            "vocal_transcription_model": {"Omnizart Vocal", "Basic Pitch", "ROSVOT"},
             "music_model": {"Piano", "PianoV2", "Pop", "Stream", "Basic Pitch", "Transkun (piano)",
                             "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor", *self.custom_models,
                             CUSTOM_MODEL},
@@ -537,7 +542,7 @@ class Application(ttk.Frame):
         self.vocal_track_settings = ttk.Frame(card, style='Card.TFrame')
         self.vocal_track_settings.grid(row=15, column=0, columnspan=2, sticky='ew', pady=(10, 0))
         self.vocal_track_settings.columnconfigure(1, weight=1)
-        ttk.Label(self.vocal_track_settings, text='Vocal MIDI separator', style='CardLabel.TLabel').grid(row=0, column=0, sticky='w')
+        ttk.Label(self.vocal_track_settings, text='Vocal audio separator', style='CardLabel.TLabel').grid(row=0, column=0, sticky='w')
         self.vocal_track_backend_picker = ttk.Combobox(self.vocal_track_settings, textvariable=self.vocal_track_backend,
             values=['Same as vocal reduction', 'Same as selected stem', 'Built-in', 'pymss'], state='readonly', style='App.TCombobox')
         self.vocal_track_backend_picker.grid(row=0, column=1, sticky='ew', padx=(14, 0))
@@ -556,6 +561,15 @@ class Application(ttk.Frame):
         self.vocal_track_pymss_button.grid(row=1, column=0, sticky='w', pady=(6, 0))
         self.vocal_track_pymss_label = ttk.Label(self.vocal_track_settings, text='', style='CardHint.TLabel')
         self.vocal_track_pymss_label.grid(row=2, column=0, columnspan=2, sticky='w')
+        ttk.Label(self.vocal_track_settings, text='Vocal audio to MIDI model', style='CardLabel.TLabel').grid(row=3, column=0, sticky='w', pady=(10, 0))
+        vocal_transcriber = ttk.Combobox(self.vocal_track_settings, textvariable=self.vocal_transcription_model,
+            values=['Omnizart Vocal', 'Basic Pitch', 'ROSVOT'], state='readonly', style='App.TCombobox')
+        vocal_transcriber.grid(row=3, column=1, sticky='ew', padx=(14, 0), pady=(10, 0))
+        vocal_transcriber.bind('<<ComboboxSelected>>', self.update_separation_controls)
+        Tooltip(vocal_transcriber, 'Choose the model that turns separated singing into notes. ROSVOT is designed for singing and downloads its models on first use. Basic Pitch also supports instruments.')
+        self.rosvot_gpu_option = ttk.Checkbutton(self.vocal_track_settings, text='Use NVIDIA GPU for ROSVOT (CUDA)',
+            variable=self.rosvot_gpu, style='App.TCheckbutton')
+        self.rosvot_gpu_option.grid(row=4, column=0, columnspan=2, sticky='w', pady=(6, 0))
         self.gpu_option = ttk.Checkbutton(card, text="Use GPU for UVR separation (DirectML)",
                                           variable=self.use_gpu, command=self.update_separation_controls,
                                           style="App.TCheckbutton")
@@ -1110,6 +1124,10 @@ class Application(ttk.Frame):
             self.vocal_track_settings.grid()
         else:
             self.vocal_track_settings.grid_remove()
+        if track_active and self.vocal_transcription_model.get() == 'ROSVOT':
+            self.rosvot_gpu_option.grid()
+        else:
+            self.rosvot_gpu_option.grid_remove()
         if track_active and self.vocal_track_backend.get() == 'Built-in':
             self.vocal_track_picker.grid()
             self.vocal_track_manage.grid()
@@ -2210,6 +2228,9 @@ class Application(ttk.Frame):
                 cmd.append("--clarify-pedal-melody")
             if self.include_vocals.get():
                 cmd.append("--include-vocals")
+                cmd.extend(['--vocal-transcription-model', {'Omnizart Vocal': 'omnizart', 'Basic Pitch': 'basic-pitch', 'ROSVOT': 'rosvot'}[self.vocal_transcription_model.get()]])
+                if self.vocal_transcription_model.get() == 'ROSVOT' and self.rosvot_gpu.get():
+                    cmd.extend(['--vocal-transcription-device', 'cuda'])
             separator = None
             if uses_reduction:
                 separator = ('pymss' if self.vocal_backend.get() == 'pymss' else
