@@ -84,6 +84,7 @@ def _setup(root):
 
 def transcribe(vocal_audio, device='cpu', gpu_index=0):
     import pretty_midi
+    import soundfile as sf
     root = _root().resolve()
     config = _setup(root)
     env = os.environ.copy()
@@ -107,16 +108,58 @@ def transcribe(vocal_audio, device='cpu', gpu_index=0):
         # so the venv's CUDA PyTorch takes precedence over the bundled CPU one.
         launcher = ['-c', 'import sys,runpy; sys.path.append(sys.argv[1]); sys.argv=sys.argv[2:]; runpy.run_path(sys.argv[0],run_name="__main__")',
                     sysconfig.get_path('purelib')]
+    source = Path(vocal_audio).resolve()
+    info = sf.info(str(source))
+    duration = info.frames / info.samplerate
+    if duration <= 0:
+        raise ValueError('The separated vocal audio is empty.')
+    # ROSVOT's default 30,000-frame limit is only 160 seconds. Smaller
+    # overlapping windows avoid silently dropping the end of longer songs and
+    # provide context for notes crossing a window boundary.
+    chunk_seconds, context_seconds = 60, 6
+    total_chunks = max(1, (info.frames + chunk_seconds * info.samplerate - 1) // (chunk_seconds * info.samplerate))
+    combined = pretty_midi.PrettyMIDI()
+    voice = pretty_midi.Instrument(program=0)
     with TemporaryDirectory(prefix='omnizart-rosvot-') as temporary:
+        temp = Path(temporary)
         print('Transcribing separated singing with ROSVOT on ' + ('NVIDIA GPU' if device == 'cuda' else 'CPU') + '...', flush=True)
-        command = [str(python), *launcher, str(root / 'inference' / 'rosvot.py'), '-o', temporary,
-                   '-p', str(Path(vocal_audio).resolve()), '--config', str(config), '--sync_saving']
-        result = subprocess.run(command, cwd=str(root), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, encoding='utf-8', errors='replace',
-                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if result.returncode:
-            raise RuntimeError('ROSVOT transcription failed: ' + result.stdout[-4000:])
-        outputs = list(Path(temporary).rglob('*.mid'))
-        if len(outputs) != 1:
-            raise RuntimeError('ROSVOT did not produce a single MIDI file: ' + result.stdout[-2000:])
-        return pretty_midi.PrettyMIDI(str(outputs[0]))
+        with sf.SoundFile(str(source)) as audio:
+            for index in range(total_chunks):
+                core_start = index * chunk_seconds
+                core_end = min(duration, (index + 1) * chunk_seconds)
+                window_start = max(0, core_start - context_seconds)
+                window_end = min(duration, core_end + context_seconds)
+                if total_chunks == 1:
+                    segment = source
+                else:
+                    first = round(window_start * info.samplerate)
+                    last = min(info.frames, round(window_end * info.samplerate))
+                    audio.seek(first)
+                    samples = audio.read(last - first, dtype='float32', always_2d=True)
+                    segment = temp / f'vocal-{index:04d}.wav'
+                    sf.write(str(segment), samples, info.samplerate, subtype='FLOAT')
+                    print(f'ROSVOT section {index + 1}/{total_chunks}...', flush=True)
+                result_dir = temp / f'result-{index:04d}'
+                command = [str(python), *launcher, str(root / 'inference' / 'rosvot.py'), '-o', str(result_dir),
+                           '-p', str(segment), '--config', str(config), '--sync_saving']
+                result = subprocess.run(command, cwd=str(root), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, encoding='utf-8', errors='replace',
+                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                if result.returncode:
+                    raise RuntimeError('ROSVOT transcription failed: ' + result.stdout[-4000:])
+                outputs = list(result_dir.rglob('*.mid'))
+                if len(outputs) > 1:
+                    raise RuntimeError('ROSVOT produced multiple MIDI files for one section.')
+                if not outputs:
+                    continue  # A silent section legitimately produces no MIDI.
+                detected = pretty_midi.PrettyMIDI(str(outputs[0]))
+                for track in detected.instruments:
+                    for note in track.notes:
+                        start, end = note.start + window_start, min(duration, note.end + window_start)
+                        midpoint = (start + end) / 2
+                        if core_start <= midpoint < core_end and end > start:
+                            voice.notes.append(pretty_midi.Note(note.velocity, note.pitch, start, end))
+    if not voice.notes:
+        raise ValueError('ROSVOT found no pitched vocal notes in the separated audio.')
+    combined.instruments.append(voice)
+    return combined

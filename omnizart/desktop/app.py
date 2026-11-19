@@ -286,6 +286,7 @@ class Application(ttk.Frame):
         self.vocal_track_model = tk.StringVar(value="UVR MDX (recommended)")
         self.vocal_transcription_model = tk.StringVar(value="Omnizart Vocal")
         self.rosvot_gpu = tk.BooleanVar(value=False)
+        self.keep_vocal_pitch_bends = tk.BooleanVar(value=False)
         self.vocal_track_pymss_model = tk.StringVar(value="")
         self.stem_model = tk.StringVar(value="Built-in six-stem")
         self.stem_choice = tk.StringVar(value="All")
@@ -350,6 +351,7 @@ class Application(ttk.Frame):
             "vocal_track_pymss_model": self.vocal_track_pymss_model,
             "vocal_transcription_model": self.vocal_transcription_model,
             "rosvot_gpu": self.rosvot_gpu,
+            "keep_vocal_pitch_bends": self.keep_vocal_pitch_bends,
             "stem_model": self.stem_model, "stem_choice": self.stem_choice,
             "use_gpu": self.use_gpu, "gpu_index": self.gpu_index,
             "compare_enabled": self.compare_enabled, "compare_path": self.compare_path,
@@ -570,6 +572,10 @@ class Application(ttk.Frame):
         self.rosvot_gpu_option = ttk.Checkbutton(self.vocal_track_settings, text='Use NVIDIA GPU for ROSVOT (CUDA)',
             variable=self.rosvot_gpu, style='App.TCheckbutton')
         self.rosvot_gpu_option.grid(row=4, column=0, columnspan=2, sticky='w', pady=(6, 0))
+        self.vocal_pitch_bends_option = ttk.Checkbutton(self.vocal_track_settings, text='Keep vocal pitch bends (Basic Pitch)',
+            variable=self.keep_vocal_pitch_bends, style='App.TCheckbutton')
+        self.vocal_pitch_bends_option.grid(row=5, column=0, columnspan=2, sticky='w', pady=(6, 0))
+        Tooltip(self.vocal_pitch_bends_option, 'Keep Basic Pitch pitch bends for expressive playback. Leave off for notes at standard MIDI pitches.')
         self.gpu_option = ttk.Checkbutton(card, text="Use GPU for UVR separation (DirectML)",
                                           variable=self.use_gpu, command=self.update_separation_controls,
                                           style="App.TCheckbutton")
@@ -1128,6 +1134,10 @@ class Application(ttk.Frame):
             self.rosvot_gpu_option.grid()
         else:
             self.rosvot_gpu_option.grid_remove()
+        if track_active and self.vocal_transcription_model.get() == 'Basic Pitch':
+            self.vocal_pitch_bends_option.grid()
+        else:
+            self.vocal_pitch_bends_option.grid_remove()
         if track_active and self.vocal_track_backend.get() == 'Built-in':
             self.vocal_track_picker.grid()
             self.vocal_track_manage.grid()
@@ -2231,6 +2241,8 @@ class Application(ttk.Frame):
                 cmd.extend(['--vocal-transcription-model', {'Omnizart Vocal': 'omnizart', 'Basic Pitch': 'basic-pitch', 'ROSVOT': 'rosvot'}[self.vocal_transcription_model.get()]])
                 if self.vocal_transcription_model.get() == 'ROSVOT' and self.rosvot_gpu.get():
                     cmd.extend(['--vocal-transcription-device', 'cuda'])
+                if self.vocal_transcription_model.get() == 'Basic Pitch' and self.keep_vocal_pitch_bends.get():
+                    cmd.append('--keep-vocal-pitch-bends')
             separator = None
             if uses_reduction:
                 separator = ('pymss' if self.vocal_backend.get() == 'pymss' else

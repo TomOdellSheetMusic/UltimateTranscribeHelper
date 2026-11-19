@@ -17,7 +17,8 @@ def merge_tracks(instrument_midi, vocal_midi, destination):
     result.write(str(destination))
 
 
-def add_vocals(input_audio, vocal_stem, instrument_midi, output, model='omnizart', device='cpu', gpu_index=0):
+def add_vocals(input_audio, vocal_stem, instrument_midi, output, model='omnizart', device='cpu', gpu_index=0,
+               keep_pitch_bends=False):
     if model == 'omnizart':
         from omnizart.vocal import app
         print("Transcribing the separated vocal melody with Omnizart Vocal on CPU...", flush=True)
@@ -34,6 +35,9 @@ def add_vocals(input_audio, vocal_stem, instrument_midi, output, model='omnizart
             vocal_midi = pretty_midi.PrettyMIDI(str(path))
     else:
         raise ValueError('Unknown vocal transcription model: ' + str(model))
+    if not keep_pitch_bends:
+        for track in vocal_midi.instruments:
+            track.pitch_bends.clear()
     destination = Path(output)
     if destination.is_dir():
         destination = destination / (Path(input_audio).stem + ".mid")

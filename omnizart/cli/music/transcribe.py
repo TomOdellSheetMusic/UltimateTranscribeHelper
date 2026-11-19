@@ -35,6 +35,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--include-vocals", is_flag=True, help="Add a separate vocal melody track to the MIDI.")
 @click.option("--vocal-transcription-model", type=click.Choice(['omnizart', 'basic-pitch', 'rosvot']), default='omnizart', help="Model that converts the separated vocal audio to notes.")
 @click.option("--vocal-transcription-device", type=click.Choice(['cpu', 'cuda']), default='cpu', help="Device for ROSVOT vocal transcription.")
+@click.option("--keep-vocal-pitch-bends", is_flag=True, help="Preserve expressive vocal pitch bends when supported by the selected model.")
 @click.option("--separator", type=click.Choice(["spleeter", "uvr", "vocal-ft", "inst-hq4", "inst-hq5", "pymss"]), default="spleeter", help="Vocal separation model.")
 @click.option("--reduction-pymss-model", default=None, help="pymss model for vocal reduction; defaults to --pymss-model.")
 @click.option("--vocal-track-separator", type=click.Choice(["spleeter", "uvr", "vocal-ft", "inst-hq4", "inst-hq5", "pymss", "stem"]), default=None, help="Vocal-track separator; 'stem' reuses the selected stem model.")
@@ -64,7 +65,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--clarify-pedal-melody", is_flag=True, help="Shorten notes at the next attack in the same hand when the pedal sustains them.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
-               save_accompaniment, include_vocals, vocal_transcription_model, vocal_transcription_device, separator, reduction_pymss_model, vocal_track_separator, vocal_track_pymss_model, uvr_device, gpu_index,
+               save_accompaniment, include_vocals, vocal_transcription_model, vocal_transcription_device, keep_vocal_pitch_bends, separator, reduction_pymss_model, vocal_track_separator, vocal_track_pymss_model, uvr_device, gpu_index,
                compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, prefer_right_octave, move_left_chords, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
     """Transcribe a single audio and output as a MIDI file.
 
@@ -221,6 +222,8 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 vocal_options = {} if vocal_transcription_model == 'omnizart' else {'model': vocal_transcription_model}
                 if vocal_transcription_model == 'rosvot':
                     vocal_options.update(device=vocal_transcription_device, gpu_index=gpu_index)
+                if keep_vocal_pitch_bends:
+                    vocal_options['keep_pitch_bends'] = True
                 add_vocals(input_audio, vocal_stem, instrument_output, output, **vocal_options)
     elif remove_vocals or include_vocals:
         from omnizart.desktop.vocal_separation import separate as separate_vocals
@@ -259,6 +262,8 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 vocal_options = {} if vocal_transcription_model == 'omnizart' else {'model': vocal_transcription_model}
                 if vocal_transcription_model == 'rosvot':
                     vocal_options.update(device=vocal_transcription_device, gpu_index=gpu_index)
+                if keep_vocal_pitch_bends:
+                    vocal_options['keep_pitch_bends'] = True
                 add_vocals(input_audio, vocal_stem, instrument_midi, output, **vocal_options)
             else:
                 _transcribe(instrument_input, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)

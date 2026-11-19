@@ -719,7 +719,11 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             for note in quantized:
                 index = remaining[note].popleft()
                 positions[index] = (note[0] / (4 * unit_scale), note[1] / (4 * unit_scale))
-            analysis_out.setdefault('other_positions', {})[key] = positions
+            # A vocal is a performance, not a piano staff. Keep its original
+            # note starts and releases when mapping into the aligned MIDI;
+            # the MusicXML still receives the score's notated rhythm.
+            if 'vocal' not in names.get(key[0], '').casefold() or simplify:
+                analysis_out.setdefault('other_positions', {})[key] = positions
         if simplify and is_piano:
             staff_notes = _simplify_piano_hands(staff_notes, length)
             if analysis_out is not None:

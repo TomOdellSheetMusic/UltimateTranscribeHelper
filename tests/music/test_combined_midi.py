@@ -47,12 +47,19 @@ class CombinedMidiTests(unittest.TestCase):
                 vocal = pretty_midi.PrettyMIDI()
                 part = pretty_midi.Instrument(0)
                 part.notes.append(pretty_midi.Note(80, 72, 0, 1))
+                part.pitch_bends.append(pretty_midi.PitchBend(1365, .25))
                 vocal.instruments.append(part)
                 vocal.write(output)
             with patch('omnizart.desktop.basic_pitch.transcribe', side_effect=predict):
                 add_vocals(root / 'song.wav', root / 'voice.wav', root / 'piano.mid', root / 'result.mid', model='basic-pitch')
             result = pretty_midi.PrettyMIDI(str(root / 'result.mid'))
             self.assertEqual([part.name for part in result.instruments], ['Piano', 'Vocals'])
+            self.assertFalse(result.instruments[-1].pitch_bends)
+            with patch('omnizart.desktop.basic_pitch.transcribe', side_effect=predict):
+                add_vocals(root / 'song.wav', root / 'voice.wav', root / 'piano.mid', root / 'bent.mid',
+                           model='basic-pitch', keep_pitch_bends=True)
+            bent = pretty_midi.PrettyMIDI(str(root / 'bent.mid'))
+            self.assertEqual([bend.pitch for bend in bent.instruments[-1].pitch_bends], [1365])
 
 
 if __name__ == "__main__":

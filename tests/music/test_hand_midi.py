@@ -449,7 +449,11 @@ class HandMidiTests(unittest.TestCase):
             result = mido.MidiFile(target)
             vocal_out = next(track for track in result.tracks if track.name == 'Vocals')
             self.assertEqual([msg.note for msg in vocal_out if msg.type == 'note_on' and msg.velocity], [65])
-            self.assertTrue(all(tick % 120 == 0 for tick, msg in absolute(vocal_out) if msg.type in ('note_on', 'note_off')))
+            import pretty_midi
+            before = next(part for part in pretty_midi.PrettyMIDI(str(source)).instruments if part.name == 'Vocals').notes[0]
+            after = next(part for part in pretty_midi.PrettyMIDI(str(target)).instruments if part.name == 'Vocals').notes[0]
+            self.assertAlmostEqual(before.start, after.start, places=3)
+            self.assertAlmostEqual(before.end, after.end, places=3)
             vocal_channel = next(msg.channel for msg in vocal_out if msg.type == 'note_on')
             hand_channels = {msg.channel for track in result.tracks[-2:] for msg in track if msg.type == 'note_on' and msg.velocity}
             self.assertEqual(len(hand_channels), 2)
