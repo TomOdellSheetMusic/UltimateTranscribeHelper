@@ -62,7 +62,7 @@ def _expression_guards(midi):
     return protected
 
 
-def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=True):
+def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=True, quiet_velocity=0):
     """Merge likely broken short notes, preserving other events and the source file.
 
     Skip percussion, vocal tracks, and passages with pedal or pitch bends. These
@@ -72,6 +72,8 @@ def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=Tr
         raise ValueError("Maximum smoothing gap must be between 0 and 200 ms.")
     if not 0 <= min_note_ms <= 200:
         raise ValueError("Minimum note length must be between 0 and 200 ms.")
+    if not isinstance(quiet_velocity, int) or not 0 <= quiet_velocity <= 127:
+        raise ValueError("Quiet note velocity must be between 0 and 127.")
     source, destination = Path(source), Path(destination)
     if source.resolve() == destination.resolve():
         raise ValueError("The cleaned MIDI must have a different filename.")
@@ -110,6 +112,20 @@ def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=Tr
             previous = None
             groups = []
             for current in pairs:
+                velocity = absolute[current[0]][1].velocity
+                if quiet_velocity and velocity <= quiet_velocity:
+                    # A soft same-pitch reattack immediately following a louder
+                    # note often represents its tail. Hold the original attack
+                    # through it only where expression controls make this safe.
+                    if previous is not None:
+                        gap_ms = (at(current[2]) - at(previous[3])) * 1000
+                        if 0 <= gap_ms <= 30 and not protected(key[0], previous[2], current[3]):
+                            removed.update((previous[1], current[0]))
+                            previous[1], previous[3] = current[1], current[3]
+                            total += 1
+                            continue
+                    removed.update((current[0], current[1]))
+                    continue
                 if previous is not None:
                     gap_ms = (at(current[2]) - at(previous[3])) * 1000
                     left_ms = (at(previous[3]) - at(previous[2])) * 1000

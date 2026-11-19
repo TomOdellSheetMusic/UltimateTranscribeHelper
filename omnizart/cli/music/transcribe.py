@@ -52,10 +52,11 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--smooth-notes", is_flag=True, help="Also save a conservatively smoothed MIDI copy.")
 @click.option("--smooth-gap-ms", type=click.FloatRange(0, 200), default=30, help="Maximum gap to join, in milliseconds.")
 @click.option("--remove-short-ms", type=click.FloatRange(0, 200), default=0, help="Also remove notes shorter than this duration; 0 disables.")
+@click.option("--remove-quiet-velocity", type=click.IntRange(0, 127), default=0, help="Remove notes at or below this MIDI velocity; 0 disables.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
                save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
-               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms):
+               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity):
     """Transcribe a single audio and output as a MIDI file.
 
     This will output a MIDI file with the same name as the given audio, except the
@@ -195,7 +196,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                                     onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
         else:
             _transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms)
-    if smooth_notes or remove_short_ms or lint_notes or score or musescore or compare_midi or split_hands:
+    if smooth_notes or remove_short_ms or remove_quiet_velocity or lint_notes or score or musescore or compare_midi or split_hands:
         target = Path(output)
         if input_is_piano and model_path not in ("Piano", "PianoV2", "Transkun (piano)", "Transkun V2 Aug", "Pedal Piano"):
             target = _midi_target(output, input_audio)
@@ -206,13 +207,14 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 target = Path(str(target) + ".mid")
         elif target.suffix.lower() not in (".mid", ".midi"):
             target = Path(str(target) + ".mid")
-    if smooth_notes or remove_short_ms or lint_notes or score or musescore or compare_midi or split_hands:
+    if smooth_notes or remove_short_ms or remove_quiet_velocity or lint_notes or score or musescore or compare_midi or split_hands:
         original_target = target
-    if smooth_notes or remove_short_ms:
+    if smooth_notes or remove_short_ms or remove_quiet_velocity:
         from omnizart.desktop.smoothing import smooth_midi
         cleaned = target.with_name(target.stem + '_smoothed.mid')
         try:
-            merged = smooth_midi(target, cleaned, smooth_gap_ms, remove_short_ms, join_notes=smooth_notes)
+            merged = smooth_midi(target, cleaned, smooth_gap_ms, remove_short_ms, join_notes=smooth_notes,
+                                 quiet_velocity=remove_quiet_velocity)
         except (OSError, ValueError) as exc:
             raise click.ClickException(f'Original MIDI was saved, but smoothing failed: {exc}') from exc
         click.echo(f'Cleaned MIDI saved to {cleaned} ({merged} fragments joined). Original preserved.')

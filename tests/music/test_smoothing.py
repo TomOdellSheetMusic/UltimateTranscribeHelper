@@ -17,6 +17,27 @@ def note_events(track):
 
 
 class SmoothingTests(unittest.TestCase):
+    def test_quiet_notes_are_removed_or_joined_to_a_matching_recent_note(self):
+        with TemporaryDirectory() as folder:
+            source, target = Path(folder) / 'raw.mid', Path(folder) / 'clean.mid'
+            midi = mido.MidiFile(ticks_per_beat=500)
+            midi.tracks.append(mido.MidiTrack([
+                mido.Message('note_on', note=60, velocity=80),
+                mido.Message('note_off', note=60, time=100),
+                mido.Message('note_on', note=60, velocity=10, time=10),
+                mido.Message('note_off', note=60, time=100),
+                mido.Message('note_on', note=62, velocity=15, time=10),
+                mido.Message('note_off', note=62, time=30),
+                mido.Message('note_on', note=64, velocity=16, time=10),
+                mido.Message('note_off', note=64, time=30)]))
+            midi.save(source)
+            original = source.read_bytes()
+            self.assertEqual(smooth_midi(source, target, join_notes=False, quiet_velocity=15), 1)
+            self.assertEqual(source.read_bytes(), original)
+            self.assertEqual(note_events(mido.MidiFile(target).tracks[0]), [
+                (0, 'note_on', 60, 80), (210, 'note_off', 60, 64),
+                (260, 'note_on', 64, 16), (290, 'note_off', 64, 64)])
+
     def test_merges_fragments_and_preserves_tracks_and_metadata(self):
         with TemporaryDirectory() as folder:
             source, target = Path(folder) / "raw.mid", Path(folder) / "clean.mid"

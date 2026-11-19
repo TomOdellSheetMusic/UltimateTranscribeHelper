@@ -43,6 +43,30 @@ def absolute(track):
 
 
 class HandMidiTests(unittest.TestCase):
+    def test_quiet_filter_is_applied_before_hands_and_score(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(_audio, _model, target, *args):
+                midi = mido.MidiFile(ticks_per_beat=480)
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('note_on', note=60, velocity=10),
+                    mido.Message('note_off', note=60, time=240),
+                    mido.Message('note_on', note=72, velocity=80),
+                    mido.Message('note_off', note=72, time=240)]))
+                midi.save(str(target) + '.mid')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                    '--model-path', 'Piano', '--score', '--split-hands', '--remove-quiet-velocity', '15'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            original = mido.MidiFile(output.with_suffix('.mid'))
+            self.assertEqual([m.note for t in original.tracks for m in t if m.type == 'note_on'], [60, 72])
+            final = mido.MidiFile(output.with_name('result_hands.mid'))
+            self.assertEqual([m.note for t in final.tracks for m in t if m.type == 'note_on' and m.velocity], [72])
+            xml = ET.parse(output.with_suffix('.musicxml'))
+            self.assertEqual([n.findtext('pitch/step') for n in xml.findall('.//note[pitch]')], ['C'])
+            self.assertEqual([n.findtext('pitch/octave') for n in xml.findall('.//note[pitch]')], ['5'])
+
     def test_split_preserves_notes_timing_tempo_and_pedal(self):
         with TemporaryDirectory() as folder:
             source, target = Path(folder) / 'input.mid', Path(folder) / 'hands.mid'
