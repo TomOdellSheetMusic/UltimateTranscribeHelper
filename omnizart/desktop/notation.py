@@ -612,7 +612,9 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             for staff, assigned in staff_notes.items():
                 for note in assigned:
                     hands[indices[note].popleft()] = staff
-            analysis_out.update(hands=hands, positions=positions, grid=grid, tempo=bpm, meter=(numerator, denominator), key=score_key, piano_key=key, alignment_warning=alignment_warning)
+            analysis_out.update(hands=hands, positions=positions, grid=grid, tempo=bpm, meter=(numerator, denominator),
+                                pickup_offset=first_left / (4 * unit_scale), key=score_key, piano_key=key,
+                                alignment_warning=alignment_warning)
         elif analysis_out is not None:
             positions = [None] * len(entries)
             remaining = defaultdict(deque)

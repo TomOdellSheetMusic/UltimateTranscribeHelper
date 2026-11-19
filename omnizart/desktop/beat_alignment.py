@@ -1,10 +1,13 @@
 ﻿"""Run the optional Beat This! model in its isolated environment."""
 import json
+from bisect import bisect_left
 import math
 import statistics
+from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
+import warnings
 from tempfile import TemporaryDirectory
 
 from omnizart.desktop.optional_models import environment, python_path, ready
@@ -38,6 +41,11 @@ def detect(audio):
                                         errors='replace', timeout=300, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
                 if result.returncode == 0 and decoded.is_file():
                     candidate = json.loads(decoded.read_text(encoding='utf-8'))
+                    if isinstance(candidate, dict) and isinstance(candidate.get('beats'), list) and isinstance(candidate.get('downbeats'), list) and _irregular(candidate['beats']):
+                        stabilized = _stabilize_beat_rate(candidate['beats'], candidate['downbeats'])
+                        if stabilized is not None:
+                            candidate = stabilized
+                            warnings.warn('Audio bar alignment corrected a half/double beat-rate change. Review the tempo and bar lines.', UserWarning)
                     if (isinstance(candidate, dict) and isinstance(candidate.get('beats'), list) and isinstance(candidate.get('downbeats'), list)
                             and not _irregular(candidate['beats']) and candidate['downbeats']):
                         print('Refined irregular beat detections using the rhythm decoder.', flush=True)
@@ -59,3 +67,66 @@ def _irregular(beats):
         return sum(not .55 * typical <= step <= 1.8 * typical for step in steps) > len(steps) * .15
     except (TypeError, ValueError):
         return True
+
+
+def _stabilize_beat_rate(beats, downbeats):
+    """Resolve a strongly supported half-time/double-time decoder switch.
+
+    Keep the predominant beat rate only when a single 3/4 or 4/4 downbeat
+    phase is strongly supported. Ambiguous or genuinely irregular material is
+    left for the caller's explicitly warned fallback.
+    """
+    try:
+        beats = [float(value) for value in beats]
+        downbeats = [float(value) for value in downbeats]
+        if len(beats) < 32 or any(not math.isfinite(value) or value < 0 for value in beats + downbeats):
+            return None
+        steps = [b - a for a, b in zip(beats, beats[1:])]
+        if any(step <= 0 for step in steps):
+            return None
+        period = statistics.median(steps)
+        short = sum(.42 * period <= step <= .58 * period for step in steps)
+        normal = sum(.8 * period <= step <= 1.2 * period for step in steps)
+        if not .4 <= period <= 2 or short < 8 or normal < 8 or short < len(steps) * .05:
+            return None
+        costs = [float('inf')] * len(beats)
+        previous = [None] * len(beats)
+        costs[0] = 0.0
+        for i in range(1, len(beats)):
+            for j in range(max(0, i - 3), i):
+                interval = beats[i] - beats[j]
+                if not .4 * period <= interval <= 1.8 * period:
+                    continue
+                cost = costs[j] + abs(math.log(interval / period)) + .12 * (i - j - 1)
+                if cost < costs[i]:
+                    costs[i], previous[i] = cost, j
+        if not math.isfinite(costs[-1]):
+            return None
+        indexes = []
+        position = len(beats) - 1
+        while position is not None:
+            indexes.append(position)
+            position = previous[position]
+        selected = [beats[index] for index in reversed(indexes)]
+        if _irregular(selected):
+            return None
+        matched = set()
+        for downbeat in downbeats:
+            position = bisect_left(selected, downbeat)
+            nearest = min((index for index in (position - 1, position) if 0 <= index < len(selected)),
+                          key=lambda index: abs(selected[index] - downbeat))
+            if abs(selected[nearest] - downbeat) <= min(.1, .25 * period):
+                matched.add(nearest)
+        if len(matched) < 4:
+            return None
+        choices = []
+        for meter in (3, 4):
+            phase, votes = Counter(index % meter for index in matched).most_common(1)[0]
+            choices.append((votes / len(matched), meter, phase))
+        confidence, meter, phase = max(choices)
+        if confidence < .7:
+            return None
+        anchors = [beat for index, beat in enumerate(selected) if index % meter == phase]
+        return {'beats': selected, 'downbeats': anchors}
+    except (TypeError, ValueError, OverflowError):
+        return None

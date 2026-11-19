@@ -128,13 +128,39 @@ class HandMidiTests(unittest.TestCase):
             self.assertEqual([m.note for m in midi.tracks[-1] if m.type == 'note_on' and m.velocity], [48])
             self.assertTrue(any(m.type == 'set_tempo' and abs(m.tempo - 600000) <= 1 for m in midi.tracks[0]))
             self.assertEqual([m.key for m in midi.tracks[0] if m.type == 'key_signature'], ['Bb'])
-            self.assertEqual([(m.numerator, m.denominator) for m in midi.tracks[0] if m.type == 'time_signature'], [(4, 4)])
+            self.assertEqual([(m.numerator, m.denominator) for m in midi.tracks[0] if m.type == 'time_signature'], [(2, 4), (4, 4)])
             for track in midi.tracks[-2:]:
                 self.assertTrue(all(tick % 120 == 0 for tick, msg in absolute(track) if msg.type in ('note_on', 'note_off')))
             xml = ET.parse(output.with_suffix('.musicxml'))
             staff_by_pitch = {int(n.findtext('pitch/octave')) * 12 + {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}[n.findtext('pitch/step')] + 12:
                               int(n.findtext('staff')) for n in xml.findall('.//note[pitch]')}
             self.assertEqual((staff_by_pitch[72], staff_by_pitch[48]), (1, 2))
+
+    def test_pickup_keeps_audio_timing_and_restores_meter_at_barline(self):
+        with TemporaryDirectory() as folder:
+            source, target, score = (Path(folder) / name for name in ('input.mid', 'hands.mid', 'score.musicxml'))
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=90, time=960),
+                                               mido.Message('note_off', note=60, time=480)]))
+            midi.save(source)
+            analysis = {}
+            beats = [1 + .5 * i for i in range(13)]
+            with patch('omnizart.desktop.beat_alignment.detect', return_value=(beats, [1, 3, 5, 7])):
+                export_score(source, score, audio='song.wav', align_bars=True, analysis_out=analysis)
+            analysis['quantize'] = True
+            split_piano_midi(source, target, analysis)
+            result = mido.MidiFile(target)
+            self.assertEqual([(t, m.numerator, m.denominator) for t, m in absolute(result.tracks[0])
+                              if m.type == 'time_signature'], [(0, 2, 4), (960, 4, 4)])
+            first = next((t, m) for track in result.tracks for t, m in absolute(track)
+                         if m.type == 'note_on' and m.velocity)
+            self.assertEqual(first[0], 960)
+            seconds = 0
+            for message in result:
+                seconds += message.time
+                if message.type == 'note_on' and message.velocity:
+                    break
+            self.assertAlmostEqual(seconds, 1.0, places=3)
 
     def test_alignment_failure_saves_estimated_midi_with_warning(self):
         with TemporaryDirectory() as folder:

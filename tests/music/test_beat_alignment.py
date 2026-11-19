@@ -23,6 +23,24 @@ def test_invalid_beat_times_are_irregular():
     assert beat_alignment._irregular([0, .5, float('nan'), 1.5])
 
 
+def test_stabilizes_supported_half_double_time_switch_without_fixed_bpm():
+    for scale in (1.0, 1.3):
+        beats = [i * .4 * scale for i in range(40)]
+        beats += [beats[-1] + i * .8 * scale for i in range(1, 81)]
+        downbeats = beats[::4]
+        result = beat_alignment._stabilize_beat_rate(beats, downbeats)
+        assert result is not None
+        assert not beat_alignment._irregular(result['beats'])
+        gaps = [b - a for a, b in zip(result['beats'], result['beats'][1:])]
+        assert abs(sum(gaps) / len(gaps) - .8 * scale) < .02
+        assert len(result['downbeats']) > 8
+
+
+def test_does_not_invent_bar_phase_without_agreement():
+    beats = [i * .4 for i in range(40)] + [15.6 + i * .8 for i in range(1, 81)]
+    assert beat_alignment._stabilize_beat_rate(beats, [beats[i] for i in (1, 7, 13, 20, 29, 37)]) is None
+
+
 def test_irregular_detection_is_refined_without_rerunning_the_model():
     calls = []
     irregular = {'beats': [0, .3, .42, .6, .9, 1.2], 'downbeats': [0, .9],

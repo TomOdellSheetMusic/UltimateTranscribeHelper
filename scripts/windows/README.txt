@@ -14,8 +14,8 @@ output folder; new runs use numbered file names and do not replace earlier ones.
 Piano beat alignment, neural hand assignment, score simplification and note
 cleanup are combined in the final `_hands.mid`; the original transcription
 is also kept. Beat alignment writes a tempo map and quantizes final notes to
-the same grid as the optional MusicXML score. A pickup may introduce leading
-silence so the first detected bar line falls on a MIDI bar boundary. For a
+the same grid as the optional MusicXML score. A short initial MIDI measure
+represents a pickup, preserving both the bar positions and audio timing. For a
 recording with unreliable beat detections, the app may use an estimated
 constant-tempo grid and mark the result "Review timing" in the queue. For a
 hand-split MIDI without those options, select "Save MIDI with left and right

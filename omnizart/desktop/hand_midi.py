@@ -152,7 +152,8 @@ def split_piano_midi(source, destination, analysis=None):
         overrides = {(len(midi.tracks) + staff - 1, index + 1): position
                      for staff in (1, 2) for index, position in enumerate(hand_positions[staff]) if position is not None}
         overrides.update(output_overrides)
-        output = _align_midi(output, analysis['grid'], analysis['meter'], overrides, analysis.get('key'))
+        output = _align_midi(output, analysis['grid'], analysis['meter'], overrides, analysis.get('key'),
+                             analysis.get('pickup_offset', 0))
     elif analysis is not None and (analysis.get('key') or analysis.get('apply_meter')):
         output = _update_metadata(output, analysis.get('key'), analysis['meter'] if analysis.get('apply_meter') else None)
     with destination.open('xb') as stream:
@@ -165,8 +166,12 @@ def split_piano_midi(source, destination, analysis=None):
     return len(assigned[1]), len(assigned[2])
 
 
-def _align_midi(midi, grid, meter, overrides=None, key=None):
+def _align_midi(midi, grid, meter, overrides=None, key=None, pickup_offset=0):
     """Map performance seconds onto the selected beat grid and tempo changes."""
+    shift = round(pickup_offset * midi.ticks_per_beat)
+    measure = round(meter[0] * 4 / meter[1] * midi.ticks_per_beat)
+    if not 0 <= shift < measure:
+        raise ValueError('Invalid pickup offset for MIDI bar alignment.')
     events = []
     for track_index, track in enumerate(midi.tracks):
         tick = 0
@@ -186,20 +191,36 @@ def _align_midi(midi, grid, meter, overrides=None, key=None):
             continue
         if key and message.type == 'key_signature':
             continue
-        new_tick = (overrides or {}).get((track_index, order), max(0, round(grid.position(seconds) * midi.ticks_per_beat)))
+        raw_tick = (overrides or {}).get((track_index, order), round(grid.position(seconds) * midi.ticks_per_beat))
+        new_tick = max(0, raw_tick - shift)
         tracks[track_index].append((new_tick, message))
     output = mido.MidiFile(type=1, ticks_per_beat=midi.ticks_per_beat)
     period = 60 / grid.manual_tempo if grid.manual_tempo is not None else grid.beats[1] - grid.beats[0]
-    timing = [(0, mido.MetaMessage('time_signature', numerator=meter[0], denominator=meter[1])),
-              (0, mido.MetaMessage('set_tempo', tempo=round(period * 1000000)))]
+    timing = [(0, mido.MetaMessage('set_tempo', tempo=round(period * 1000000)))]
+    if shift:
+        pickup = measure - shift
+        sixteenths = round(pickup * 4 / midi.ticks_per_beat)
+        if sixteenths < 1 or abs(sixteenths * midi.ticks_per_beat / 4 - pickup) > 1:
+            raise ValueError('The MIDI pickup cannot be represented safely.')
+        denominator = 16
+        while denominator > 4 and sixteenths % 2 == 0:
+            sixteenths //= 2
+            denominator //= 2
+        timing.extend([(0, mido.MetaMessage('time_signature', numerator=sixteenths, denominator=denominator)),
+                       (pickup, mido.MetaMessage('time_signature', numerator=meter[0], denominator=meter[1]))])
+    else:
+        timing.append((0, mido.MetaMessage('time_signature', numerator=meter[0], denominator=meter[1])))
     if key:
         timing.append((0, mido.MetaMessage('key_signature', key=key)))
     if grid.manual_tempo is None:
         for i in range(1, len(grid.beats) - 1):
             position = round(grid.position(grid.beats[i]) * midi.ticks_per_beat)
-            if position > 0:
-                timing.append((position, mido.MetaMessage('set_tempo', tempo=round((grid.beats[i + 1] - grid.beats[i]) * 1000000))))
-    output.tracks.append(_make_track(timing))
+            tempo_message = mido.MetaMessage('set_tempo', tempo=round((grid.beats[i + 1] - grid.beats[i]) * 1000000))
+            if position <= shift:
+                timing[0] = (0, tempo_message)
+            else:
+                timing.append((position - shift, tempo_message))
+    output.tracks.append(_make_track(sorted(timing, key=lambda item: item[0])))
     output.tracks.extend(_make_track(sorted(track, key=lambda item: item[0])) for track in tracks)
     return output
 
