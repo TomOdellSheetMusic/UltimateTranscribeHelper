@@ -5,6 +5,7 @@ allocated to separate voices so that a held note need not be tied at every
 attack in another voice. The original MIDI is never modified.
 """
 from collections import defaultdict, deque
+from bisect import bisect_right
 import math
 import subprocess
 import warnings
@@ -569,6 +570,32 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
     original_length = length
     length *= unit_scale
     first_left *= unit_scale
+    pedal_by_channel = defaultdict(list)
+    pedal_intervals = defaultdict(list)
+    if notate_pedal:
+        from omnizart.desktop.smoothing import _tempo_map
+        pedal_midi = mido.MidiFile(str(source))
+        seconds_at = _tempo_map(pedal_midi)
+        pedal_times = defaultdict(list)
+        for track in pedal_midi.tracks:
+            tick = 0
+            for message in track:
+                tick += message.time
+                if message.type == 'control_change' and message.control == 64 and message.channel != 9:
+                    time = seconds_at(tick)
+                    pedal_times[message.channel].append((time, message.value >= 64))
+        for channel, events in pedal_times.items():
+            down = None
+            for time, pressed in sorted(events, key=lambda event: event[0]):
+                position = max(0, round(beat_position(time) * 4 * unit_scale))
+                pedal_by_channel[channel].append((position, pressed))
+                if pressed and down is None:
+                    down = time
+                elif not pressed and down is not None:
+                    pedal_intervals[channel].append((down, time))
+                    down = None
+        if not any(pedal_intervals.values()):
+            warnings.warn('Pedal cleanup skipped: no complete sustain-pedal events were found in the MIDI.', UserWarning)
     score = ET.Element('score-partwise', version='4.0')
     work = _element(score, 'work')
     _element(work, 'work-title', Path(source).stem)
@@ -601,6 +628,33 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                                 for start, end, pitch, velocity in quantized]
             preferences = predict_staff(prediction_notes, original_length, denominator)
         staff_notes = _assign_piano_hands(quantized, length, preferences, unit_scale) if is_piano else {1: quantized}
+        if notate_pedal and is_piano and pedal_intervals[key[1]]:
+            # Match each staff note to its original event before modifying it.
+            # Simultaneous attacks form a chord; only a later attack by the
+            # same hand can end a likely pedal tail.
+            original_indices = defaultdict(deque)
+            for note, index in indexed:
+                original_indices[note].append(index)
+            replacements = {}
+            for staff, assigned in staff_notes.items():
+                attacks = sorted({note[0] for note in assigned})
+                revised = []
+                for note in assigned:
+                    index = original_indices[note].popleft()
+                    start, end, pitch, velocity = note
+                    original_start, original_end, _, _ = entries[index]
+                    is_tail = any(down - .05 <= original_start < up and
+                                  abs(original_end - up) <= .08
+                                  for down, up in pedal_intervals[key[1]])
+                    attack_index = bisect_right(attacks, start)
+                    next_attack = attacks[attack_index] if attack_index < len(attacks) else None
+                    if is_tail and next_attack is not None and next_attack < end:
+                        note = (start, next_attack, pitch, velocity)
+                        replacements[index] = note
+                    revised.append(note)
+                staff_notes[staff] = revised
+            indexed = [(replacements.get(index, note), index) for note, index in indexed]
+            warnings.warn(f'Pedal cleanup shortened {len(replacements)} likely pedal-held note(s); review their durations.', UserWarning)
         if analysis_out is not None and is_piano:
             indices = defaultdict(deque)
             for note, index in indexed:
@@ -652,18 +706,6 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         if analysis_out is not None and 'hands' not in analysis_out:
             raise ValueError('Hand-track export requires one piano instrument track.')
         return bpm
-    pedal_by_channel = defaultdict(list)
-    if notate_pedal:
-        from omnizart.desktop.smoothing import _tempo_map
-        pedal_midi = mido.MidiFile(str(source))
-        seconds_at = _tempo_map(pedal_midi)
-        for track in pedal_midi.tracks:
-            tick = 0
-            for message in track:
-                tick += message.time
-                if message.type == 'control_change' and message.control == 64 and message.channel != 9:
-                    position = max(0, round(beat_position(seconds_at(tick)) * 4 * unit_scale))
-                    pedal_by_channel[message.channel].append((position, message.value >= 64))
     for number, staff_notes, is_piano, part_key in groups:
         part = _element(score, 'part', id=f'P{number}')
         lanes = _piano_voices(staff_notes) if is_piano else {staff: _voices(entries) for staff, entries in staff_notes.items()}

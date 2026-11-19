@@ -81,6 +81,10 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
     selected_stem = 'piano' if piano_only else (separate_stem.lower() if separate_stem else None)
     piano_output = (input_is_piano or selected_stem == 'piano' or model_path in
                     ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
+    if shorten_pedal_tails:
+        score = True
+        if piano_output:
+            split_hands = True
     if neural_staff or (piano_output and (align_bars or simplify_score or score_tempo is not None or
                                          score_key != 'Auto' or score_meter is not None or score_downbeat is not None)):
         split_hands = True
@@ -210,12 +214,12 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             target = Path(str(target) + ".mid")
     if smooth_notes or remove_short_ms or remove_quiet_velocity or shorten_pedal_tails or lint_notes or score or musescore or compare_midi or split_hands:
         original_target = target
-    if smooth_notes or remove_short_ms or remove_quiet_velocity or shorten_pedal_tails:
+    if smooth_notes or remove_short_ms or remove_quiet_velocity:
         from omnizart.desktop.smoothing import smooth_midi
         cleaned = target.with_name(target.stem + '_smoothed.mid')
         try:
             merged = smooth_midi(target, cleaned, smooth_gap_ms, remove_short_ms, join_notes=smooth_notes,
-                                 quiet_velocity=remove_quiet_velocity, shorten_pedal=shorten_pedal_tails)
+                                 quiet_velocity=remove_quiet_velocity)
         except (OSError, ValueError) as exc:
             raise click.ClickException(f'Original MIDI was saved, but smoothing failed: {exc}') from exc
         click.echo(f'Cleaned MIDI saved to {cleaned} ({merged} fragments joined). Original preserved.')
@@ -271,7 +275,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                 bpm = analysis['tempo']
                 period = 60 / bpm
                 analysis['grid'] = BeatGrid([i * period for i in range(4)], [0], tempo=bpm, downbeat=0)
-            analysis['quantize'] = bool(score or align_bars or score_downbeat is not None or simplify_score)
+            analysis['quantize'] = bool(score or align_bars or score_downbeat is not None or simplify_score or shorten_pedal_tails)
             analysis['apply_meter'] = score_meter is not None
             from omnizart.desktop.hand_midi import split_piano_midi
             hands_path = original_target.with_name(original_target.stem + '_hands.mid')

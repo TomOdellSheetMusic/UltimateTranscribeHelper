@@ -550,10 +550,11 @@ class Application(ttk.Frame):
         self.quiet_entry.pack(side="left")
         Tooltip(self.quiet_option, "Removes low-velocity notes before hand assignment and score export. A nearby quiet repeat of the same pitch is held instead when safe. Drums and vocal tracks are skipped.")
         Tooltip(self.quiet_entry, "Remove notes at or below this MIDI velocity (1–127). The default is 15; genuine soft notes may also be removed.")
-        self.pedal_cleanup_option = ttk.Checkbutton(card, text="Shorten likely pedal-held notes and show pedal",
-            variable=self.shorten_pedal_tails, style="App.TCheckbutton")
+        self.pedal_cleanup_option = ttk.Checkbutton(card, text="Shorten likely pedal-held notes and create MusicXML",
+            variable=self.shorten_pedal_tails, style="App.TCheckbutton",
+            command=self.update_pedal_cleanup_controls)
         self.pedal_cleanup_option.grid(row=18, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        Tooltip(self.pedal_cleanup_option, "Estimates shorter key holds for notes ending at a sustain-pedal release and adds pedal markings to MusicXML. Requires MIDI pedal events; actual key releases cannot be recovered. Original MIDI is kept.")
+        Tooltip(self.pedal_cleanup_option, "Estimates shorter key holds at the next attack in the same hand and writes pedal markings to MusicXML. Open the MusicXML for pedal notation; MIDI import may hide pedal markings. Requires MIDI pedal events; original MIDI is kept.")
 
         self.lint_option = ttk.Checkbutton(card, text="Create note review report", variable=self.lint_notes, style="App.TCheckbutton")
         self.lint_option.grid(row=16, column=0, sticky="w", pady=(10, 0))
@@ -1031,6 +1032,10 @@ class Application(ttk.Frame):
         self.short_entry.configure(state="normal" if short_enabled else "disabled")
         quiet_enabled = self.mode.get() == "Piano and instruments" and self.remove_quiet_notes.get()
         self.quiet_entry.configure(state="normal" if quiet_enabled else "disabled")
+
+    def update_pedal_cleanup_controls(self):
+        if self.shorten_pedal_tails.get():
+            self.musescore_export.set(True)
 
     def toggle_log(self):
         self.log_open = not self.log_open
@@ -1709,7 +1714,7 @@ class Application(ttk.Frame):
         piano_selected = (self.input_is_piano.get() or (self.piano_only.get() and self.stem_choice.get().strip().lower() == 'piano') or
                           selected_model in ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
         final_hands = self.split_hands.get() or (piano_selected and (
-            self.neural_staff.get() or self.align_bars.get() or self.simplify_score.get() or
+            self.neural_staff.get() or self.align_bars.get() or self.simplify_score.get() or self.shorten_pedal_tails.get() or
             self.score_tempo.get().strip().lower() != 'auto' or self.score_key.get() != 'Auto' or
             self.score_meter.get() != 'Auto' or self.score_downbeat.get().strip().lower() != 'auto'))
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)

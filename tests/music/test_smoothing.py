@@ -17,38 +17,6 @@ def note_events(track):
 
 
 class SmoothingTests(unittest.TestCase):
-    def test_pedaled_scale_notes_end_at_the_next_attack(self):
-        with TemporaryDirectory() as folder:
-            source, target = Path(folder) / 'raw.mid', Path(folder) / 'clean.mid'
-            midi = mido.MidiFile(ticks_per_beat=480)
-            midi.tracks.append(mido.MidiTrack([
-                mido.Message('control_change', control=64, value=127),
-                mido.Message('note_on', note=60, velocity=80),
-                mido.Message('note_on', note=62, velocity=80, time=480),
-                mido.Message('note_on', note=64, velocity=80, time=480),
-                mido.Message('note_off', note=60, time=480),
-                mido.Message('note_off', note=62), mido.Message('note_off', note=64),
-                mido.Message('control_change', control=64, value=0)]))
-            midi.save(source)
-            with self.assertWarnsRegex(UserWarning, 'shortened 2'):
-                smooth_midi(source, target, join_notes=False, shorten_pedal=True)
-            track = mido.MidiFile(target).tracks[0]
-            self.assertEqual([(tick, typ, pitch) for tick, typ, pitch, _ in note_events(track)], [
-                (0, 'note_on', 60), (480, 'note_off', 60), (480, 'note_on', 62),
-                (960, 'note_off', 62), (960, 'note_on', 64), (1440, 'note_off', 64)])
-            self.assertEqual([m.value for m in track if m.type == 'control_change' and m.control == 64], [127, 0])
-
-    def test_pedal_cleanup_does_not_guess_without_pedal_data(self):
-        with TemporaryDirectory() as folder:
-            source, target = Path(folder) / 'raw.mid', Path(folder) / 'clean.mid'
-            midi = mido.MidiFile()
-            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
-                                              mido.Message('note_off', note=60, time=480)]))
-            midi.save(source)
-            with self.assertWarnsRegex(UserWarning, 'no complete sustain-pedal'):
-                smooth_midi(source, target, join_notes=False, shorten_pedal=True)
-            self.assertEqual(note_events(mido.MidiFile(source).tracks[0]), note_events(mido.MidiFile(target).tracks[0]))
-
     def test_quiet_notes_are_removed_or_joined_to_a_matching_recent_note(self):
         with TemporaryDirectory() as folder:
             source, target = Path(folder) / 'raw.mid', Path(folder) / 'clean.mid'

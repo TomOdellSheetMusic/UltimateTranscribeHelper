@@ -43,6 +43,66 @@ def absolute(track):
 
 
 class HandMidiTests(unittest.TestCase):
+    def test_pedaled_scale_shortens_at_successive_attacks(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / 'scale.mid'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([
+                mido.Message('control_change', control=64, value=127),
+                mido.Message('note_on', note=72, velocity=80),
+                mido.Message('note_on', note=74, velocity=80, time=480),
+                mido.Message('note_on', note=76, velocity=80, time=480),
+                mido.Message('note_off', note=72, time=480),
+                mido.Message('note_off', note=74), mido.Message('note_off', note=76),
+                mido.Message('control_change', control=64, value=0)]))
+            midi.save(source)
+            analysis = {}
+            with self.assertWarnsRegex(UserWarning, 'shortened 2'):
+                export_score(source, Path(folder) / 'unused.musicxml', tempo=120, score_key='C',
+                             notate_pedal=True, analysis_out=analysis, analysis_only=True)
+            self.assertEqual(analysis['positions'], [(0, 1), (1, 2), (2, 3)])
+
+    def test_pedal_option_leaves_note_lengths_without_pedal_events(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / 'input.mid'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                              mido.Message('note_off', note=60, time=960)]))
+            midi.save(source)
+            analysis = {}
+            with self.assertWarnsRegex(UserWarning, 'no complete sustain-pedal'):
+                export_score(source, Path(folder) / 'unused.musicxml', tempo=120, score_key='C',
+                             notate_pedal=True, analysis_out=analysis, analysis_only=True)
+            self.assertEqual(analysis['positions'], [(0, 2)])
+
+    def test_pedal_tail_waits_for_the_next_attack_in_the_same_hand(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(_audio, _model, target, *args):
+                midi = mido.MidiFile(ticks_per_beat=480)
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('control_change', control=64, value=127),
+                    mido.Message('note_on', note=48, velocity=80),
+                    mido.Message('note_on', note=84, velocity=80, time=240),
+                    mido.Message('note_off', note=84, time=120),
+                    mido.Message('note_on', note=50, velocity=80, time=120),
+                    mido.Message('note_off', note=50, time=240),
+                    mido.Message('note_off', note=48, time=240),
+                    mido.Message('control_change', control=64, value=0)]))
+                midi.save(str(target) + '.mid')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1, 2]):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                    '--model-path', 'Piano', '--neural-staff', '--score-tempo', '120',
+                    '--score-key', 'C', '--shorten-pedal-tails'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            final = mido.MidiFile(output.with_name('result_hands.mid'))
+            self.assertIn((480, 48), [(tick, msg.note) for track in final.tracks for tick, msg in absolute(track)
+                                       if msg.type == 'note_off'])
+            self.assertTrue(output.with_suffix('.musicxml').exists())
+            self.assertEqual(len(ET.parse(output.with_suffix('.musicxml')).findall('.//pedal')), 2)
+
     def test_all_cleanup_options_reach_the_final_hands_together(self):
         with TemporaryDirectory() as folder:
             audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
