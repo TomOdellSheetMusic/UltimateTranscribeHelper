@@ -50,6 +50,8 @@ def detect(audio):
 def _irregular(beats):
     try:
         beats = [float(value) for value in beats]
+        if any(not math.isfinite(value) or value < 0 for value in beats):
+            return True
         steps = [b - a for a, b in zip(beats, beats[1:])]
         if len(steps) < 3 or any(not math.isfinite(step) or step <= 0 or step < .2 or step > 2 for step in steps):
             return True

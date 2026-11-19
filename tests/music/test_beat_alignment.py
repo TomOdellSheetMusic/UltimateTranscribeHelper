@@ -18,6 +18,11 @@ def test_regular_detection_does_not_run_decoder():
     assert worker.call_count == 1
 
 
+def test_invalid_beat_times_are_irregular():
+    assert beat_alignment._irregular([-1, -.5, 0, .5])
+    assert beat_alignment._irregular([0, .5, float('nan'), 1.5])
+
+
 def test_irregular_detection_is_refined_without_rerunning_the_model():
     calls = []
     irregular = {'beats': [0, .3, .42, .6, .9, 1.2], 'downbeats': [0, .9],
