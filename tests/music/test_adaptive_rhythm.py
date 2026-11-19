@@ -215,7 +215,7 @@ class AdaptiveRhythmTests(unittest.TestCase):
             notes = [n for n in xml.findall('.//note') if n.find('pitch') is not None]
             self.assertEqual([n.findtext('duration') for n in notes], ['8'] * 3)
             directions = xml.findall('.//direction')
-            self.assertTrue(any(d.findtext('offset') == '12' and abs(float(d.find('sound').get('tempo')) - 100) < .01
+            self.assertTrue(any(d.findtext('offset') == '36' and abs(float(d.find('sound').get('tempo')) - 100) < .01
                                 for d in directions if d.find('sound') is not None))
 
 

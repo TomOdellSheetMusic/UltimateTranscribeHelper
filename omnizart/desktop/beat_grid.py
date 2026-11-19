@@ -42,6 +42,32 @@ class BeatGrid:
         self.anchor = anchor
         self.anchor_position = self._raw_position(anchor)
         self.origin = math.floor((self._raw_position(0) - self.anchor_position) / self.meter) * self.meter
+        self.tempo_segments = self._simplify_tempos()
+
+    def _simplify_tempos(self, tolerance=.035):
+        """Approximate beat times within 35 ms while retaining expressive tempo changes.
+
+        The detected beats still determine note and bar positions. Only the
+        playback tempo map is simplified, using the same segments for both
+        MusicXML and MIDI. Every detected beat is within tolerance of the map.
+        """
+        if self.manual_tempo is not None:
+            return [(0, 60 / self.manual_tempo)]
+        last = len(self.beats) - 1
+        boundaries = {0, last}
+        pending = [(0, last)]
+        while pending:
+            start, end = pending.pop()
+            period = (self.beats[end] - self.beats[start]) / (end - start)
+            deviations = ((abs(self.beats[i] - (self.beats[start] + (i - start) * period)), i)
+                          for i in range(start + 1, end))
+            error, index = max(deviations, default=(0, start))
+            if error > tolerance:
+                boundaries.add(index)
+                pending.extend(((start, index), (index, end)))
+        ordered = sorted(boundaries)
+        return [(start, (self.beats[end] - self.beats[start]) / (end - start))
+                for start, end in zip(ordered, ordered[1:])]
 
     def _raw_position(self, time):
         if self.manual_tempo is not None:
@@ -63,15 +89,11 @@ class BeatGrid:
             return [(0, self.manual_tempo)] if measure_number == 0 else []
         marks = []
         if measure_number == 0:
-            marks.append((0, 60 / (self.beats[1] - self.beats[0])))
-        for index in range(len(self.beats) - 1):
+            marks.append((0, 60 / self.tempo_segments[0][1]))
+        for index, period in self.tempo_segments:
             position = round((index - self.anchor_position - self.origin) * 4)
             if left <= position < right:
-                marks.append((position - left, 60 / (self.beats[index + 1] - self.beats[index])))
-        if measure_number == (int(self.position(self.beats[-1]) * 4) // measure_length):
-            position = round(self.position(self.beats[-1]) * 4) - left
-            if 0 <= position < measure_length:
-                marks.append((position, 60 / (self.beats[-1] - self.beats[-2])))
+                marks.append((position - left, 60 / period))
         # Prefer the last mark if a downbeat is exactly at the beginning.
         return sorted(dict(marks).items())
 

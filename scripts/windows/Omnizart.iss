@@ -6,7 +6,7 @@
 [Setup]
 AppId={{7A581ADD-C170-4D4C-BF6E-7D5B68D0D0D7}
 AppName=Omnizart
-AppVersion=2.28.0
+AppVersion=2.29.0
 AppPublisher=Omnizart contributors
 DefaultDirName={localappdata}\Programs\Omnizart
 DefaultGroupName=Omnizart
@@ -17,7 +17,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupArchitecture=x64
 OutputDir=..\..\dist
-OutputBaseFilename=Omnizart-Windows-Setup-2.28
+OutputBaseFilename=Omnizart-Windows-Setup-2.29
 Compression=zip/1
 SolidCompression=no
 WizardStyle=modern

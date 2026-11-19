@@ -195,7 +195,7 @@ def _align_midi(midi, grid, meter, overrides=None, key=None, pickup_offset=0):
         new_tick = max(0, raw_tick - shift)
         tracks[track_index].append((new_tick, message))
     output = mido.MidiFile(type=1, ticks_per_beat=midi.ticks_per_beat)
-    period = 60 / grid.manual_tempo if grid.manual_tempo is not None else grid.beats[1] - grid.beats[0]
+    period = grid.tempo_segments[0][1]
     timing = [(0, mido.MetaMessage('set_tempo', tempo=round(period * 1000000)))]
     if shift:
         pickup = measure - shift
@@ -213,9 +213,9 @@ def _align_midi(midi, grid, meter, overrides=None, key=None, pickup_offset=0):
     if key:
         timing.append((0, mido.MetaMessage('key_signature', key=key)))
     if grid.manual_tempo is None:
-        for i in range(1, len(grid.beats) - 1):
+        for i, period in grid.tempo_segments[1:]:
             position = round(grid.position(grid.beats[i]) * midi.ticks_per_beat)
-            tempo_message = mido.MetaMessage('set_tempo', tempo=round((grid.beats[i + 1] - grid.beats[i]) * 1000000))
+            tempo_message = mido.MetaMessage('set_tempo', tempo=round(period * 1000000))
             if position <= shift:
                 timing[0] = (0, tempo_message)
             else:

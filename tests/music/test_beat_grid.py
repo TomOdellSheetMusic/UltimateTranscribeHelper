@@ -32,7 +32,22 @@ class BeatGridTests(unittest.TestCase):
         self.assertEqual(grid.unit(2.1) - grid.unit(1), 8)
         marks = [bpm for measure in range(4) for _, bpm in grid.tempo_marks(16, measure)]
         self.assertTrue(any(abs(bpm - 100) < .01 for bpm in marks))
-        self.assertTrue(any(abs(bpm - 120) < .01 for bpm in marks))
+        self.assertTrue(any(bpm > 110 for bpm in marks))
+
+    def test_tempo_map_reduces_jitter_but_preserves_rubato(self):
+        steps = [.5 + (0.01 if i % 2 else -0.01) for i in range(24)]
+        steps += [.6 + (0.01 if i % 2 else -0.01) for i in range(24)]
+        beats = [0.0]
+        for step in steps:
+            beats.append(beats[-1] + step)
+        grid = BeatGrid(beats, beats[::4])
+        self.assertLess(len(grid.tempo_segments), len(steps) // 3)
+        self.assertTrue(any(abs(60 / period - 100) < 2 for _, period in grid.tempo_segments))
+        self.assertTrue(any(abs(60 / period - 120) < 2 for _, period in grid.tempo_segments))
+        segments = grid.tempo_segments
+        for i, beat in enumerate(beats):
+            start, period = next(segment for segment in reversed(segments) if segment[0] <= i)
+            self.assertLessEqual(abs(beat - (beats[start] + (i - start) * period)), .035001)
 
     def test_manual_tempo_and_downbeat_override(self):
         grid = BeatGrid([1 + .6 * i for i in range(12)], [1, 3.4, 5.8], tempo=120, downbeat=.35)
@@ -55,10 +70,10 @@ class BeatGridTests(unittest.TestCase):
             root = ET.parse(target).getroot()
             first_pitched = next(m for m in root.findall('.//part/measure') if m.find('.//pitch') is not None)
             self.assertEqual(first_pitched.get('number'), '2')
-            self.assertAlmostEqual(float(root.findtext('.//metronome/per-minute')), 120)
+            self.assertGreater(float(root.findtext('.//metronome/per-minute')), 110)
             tempi = [float(sound.get('tempo')) for sound in root.findall('.//sound[@tempo]')]
             self.assertTrue(any(abs(bpm - 100) < .01 for bpm in tempi))
-            self.assertTrue(any(abs(bpm - 120) < .01 for bpm in tempi))
+            self.assertTrue(any(bpm > 110 for bpm in tempi))
             self.assertEqual(source.read_bytes(), before)
 
     def test_unsupported_meter_is_preserved_when_alignment_falls_back(self):
