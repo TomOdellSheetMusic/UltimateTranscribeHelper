@@ -3,15 +3,15 @@
 This is a small exploratory benchmark, not a ranking across music or a claim
 that a written staff always equals the hand actually used. No new model was
 integrated into the app. Model-specific Sirens MIDIs are in the local ignored
-`dist/hand-model-benchmark/sirens/` directory; the source files and downloaded
+`dist/hand-model-benchmark/sirens-exact/` directory; the source files and downloaded
 model environments are also local and are not part of the repository.
 
 ## Inputs and fairness
 
-All Sirens models received the same 2,459-note piano transcription, derived
-from `Tom Odell - Sirens_2_smoothed.mid`, after Beat This bar alignment and
-quantization. The existing app's Piano SVSep plus hand-reach heuristic generated
-the baseline hand MIDI. The alternative models saw the same notes and tempo map
+All Sirens models received the exact 2,459-note
+`Tom Odell - Sirens_2_hands.mid` supplied by the user. It already contains the
+app's bar alignment, quantization and hand assignment. The alternative models
+saw the same notes and tempo map
 on a single anonymous MIDI track; their labels were applied back to the same
 aligned MIDI. Every delivered MIDI was checked for identical note starts, ends,
 pitches and velocities, and identical tempo, meter, pedal and other control
@@ -60,7 +60,8 @@ the noisy, pedal-heavy Sirens transcription or to hand crossings.
   Its preprocessor calls track 1 right hand, but the bundled training MIDI
   files inspected label track 0 `Rechts` and track 1 `Links`. The checkpoint's
   output polarity was inverted for readable right/left tracks; the unmodified
-  polarity output is retained locally as `midi2hands_native_hands.mid`.
+  polarity output from the first Sirens run is retained locally in the
+  `sirens/` folder as `midi2hands_native_hands.mid`.
 * [PM2S](https://github.com/cheriell/PM2S), commit
   `9586f91cd16aaa50dbb82f720f6a34a3e0186f47`, official hand checkpoint SHA-256
   `35d0b768fc68f9ec23f77b512ce3cada9b4e9dd816e3ab1c2a1714fa05bc5805`.
@@ -68,7 +69,8 @@ the noisy, pedal-heavy Sirens transcription or to hand crossings.
   Its training code assigns labels from instrument order while a comment names
   the opposite polarity. Best of Friends was used to calibrate that polarity;
   I know and Silhouette are separate score excerpts for this polarity check.
-  The native-polarity MIDI is retained locally as `pm2s_native_hands.mid`.
+  The native-polarity MIDI from the first Sirens run is retained locally in
+  the `sirens/` folder as `pm2s_native_hands.mid`.
 * [BACHprop](https://github.com/lemonadedw/BACHprop), commit
   `ec4672194effa90891bc83af4b748f7b7c045051`, checkpoint SHA-256
   `a5f6cfed61d4a68e849bf4fd70061022d0a7eb67a0232128f0f8c261f302e7ac`.
