@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.9 - 2026-11-19
+
+- Export MusicXML with one representative tempo by default, while preserving
+  performance tempo changes in the aligned MIDI.
+- Offer optional hidden performance tempos and a Freely marking in scores.
+
 ## 0.6.8 - 2026-11-19
 
 - Process long ROSVOT recordings in overlapping sections so the final portion
