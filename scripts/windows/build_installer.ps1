@@ -1,7 +1,7 @@
 param(
     [string]$PortableFolder = "dist\Omnizart-Windows-PianoVoice",
     [string]$Compiler = "",
-    [string]$OutputBaseName = "Omnizart-Windows-Setup-2.26"
+    [string]$OutputBaseName = "Omnizart-Windows-Setup-2.27"
 )
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
