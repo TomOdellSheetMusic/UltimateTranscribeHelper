@@ -43,6 +43,70 @@ def absolute(track):
 
 
 class HandMidiTests(unittest.TestCase):
+    def test_all_cleanup_options_reach_the_final_hands_together(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(_audio, _model, target, *args):
+                midi = mido.MidiFile(ticks_per_beat=500)
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('note_on', note=60, velocity=80), mido.Message('note_off', note=60, time=30),
+                    mido.Message('note_on', note=60, velocity=80, time=10), mido.Message('note_off', note=60, time=80),
+                    mido.Message('note_on', note=62, velocity=10, time=10), mido.Message('note_off', note=62, time=80),
+                    mido.Message('note_on', note=64, velocity=80, time=10), mido.Message('note_off', note=64, time=10),
+                    mido.Message('note_on', note=65, velocity=80, time=10), mido.Message('note_off', note=65, time=100)]))
+                midi.save(str(target) + '.mid')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                    '--model-path', 'Piano', '--split-hands', '--smooth-notes', '--smooth-gap-ms', '30',
+                    '--remove-short-ms', '40', '--remove-quiet-velocity', '15'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            for name in ('result_smoothed.mid', 'result_hands.mid'):
+                midi = mido.MidiFile(Path(folder) / name)
+                self.assertEqual(sorted(m.note for t in midi.tracks for m in t if m.type == 'note_on' and m.velocity), [60, 65])
+
+    def test_pedal_cleanup_is_shared_by_score_and_hand_midi(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(_audio, _model, target, *args):
+                midi = mido.MidiFile(ticks_per_beat=480)
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('control_change', control=64, value=127),
+                    mido.Message('note_on', note=60, velocity=80),
+                    mido.Message('note_on', note=64, velocity=80, time=480),
+                    mido.Message('note_off', note=64, time=240),
+                    mido.Message('note_off', note=60, time=240),
+                    mido.Message('control_change', control=64, value=0)]))
+                midi.save(str(target) + '.mid')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                    '--model-path', 'Piano', '--score', '--split-hands', '--score-tempo', '120',
+                    '--score-key', 'C', '--shorten-pedal-tails'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            final = mido.MidiFile(output.with_name('result_hands.mid'))
+            events = [event for track in final.tracks for event in absolute(track)]
+            self.assertIn((480, 60), [(tick, msg.note) for tick, msg in events if msg.type == 'note_off'])
+            self.assertTrue(any(msg.type == 'control_change' and msg.control == 64 and msg.value == 127 for _, msg in events))
+            xml = ET.parse(output.with_suffix('.musicxml'))
+            note = next(n for n in xml.findall('.//note[pitch]') if n.findtext('pitch/step') == 'C')
+            self.assertEqual(note.findtext('duration'), '4')
+            self.assertEqual([p.get('type') for p in xml.findall('.//pedal')], ['start', 'stop'])
+
+    def test_pedal_on_another_track_is_copied_to_both_hands(self):
+        with TemporaryDirectory() as folder:
+            source, target = Path(folder) / 'in.mid', Path(folder) / 'out.mid'
+            midi = mido.MidiFile()
+            midi.tracks.append(mido.MidiTrack([mido.Message('control_change', control=64, value=127),
+                mido.Message('control_change', control=64, value=0, time=200)]))
+            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                mido.Message('note_off', note=60, time=100)]))
+            midi.save(source)
+            split_piano_midi(source, target)
+            for track in mido.MidiFile(target).tracks[-2:]:
+                self.assertEqual([(tick, msg.value) for tick, msg in absolute(track)
+                                  if msg.type == 'control_change' and msg.control == 64], [(0, 127), (200, 0)])
+
     def test_quiet_filter_is_applied_before_hands_and_score(self):
         with TemporaryDirectory() as folder:
             audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'

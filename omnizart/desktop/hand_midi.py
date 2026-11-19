@@ -146,7 +146,23 @@ def split_piano_midi(source, destination, analysis=None):
                     output_overrides[(track_index, len(original))] = other_overrides[(track_index, index)]
                 original.append((tick, message))
         output.tracks.append(_make_track(original))
+    # Sustain can be stored in a separate conductor/control track while still
+    # addressing the piano channel. The split hands use new channels, so copy
+    # those pedal events to both hands as well.
+    for track_index, track in enumerate(events):
+        if track_index == piano_track:
+            continue
+        for tick, _, message in track:
+            if (message.type == 'control_change' and message.channel == piano_channel and
+                    message.control == 64):
+                for staff in (1, 2):
+                    hand_events[staff].append((tick, message.copy(channel=channels[staff])))
+                    hand_positions[staff].append(None)
     for staff, name in ((1, 'Right hand'), (2, 'Left hand')):
+        # Keep event overrides in the same order as the sorted hand track.
+        ordered = sorted(zip(hand_events[staff], hand_positions[staff]), key=lambda item: item[0][0])
+        hand_events[staff] = [event for event, _ in ordered]
+        hand_positions[staff] = [position for _, position in ordered]
         output.tracks.append(_make_track([(0, mido.MetaMessage('track_name', name=name)), *hand_events[staff]]))
     if analysis is not None and analysis.get('grid') is not None:
         overrides = {(len(midi.tracks) + staff - 1, index + 1): position

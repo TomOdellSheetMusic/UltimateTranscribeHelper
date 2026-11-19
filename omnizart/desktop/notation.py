@@ -462,7 +462,7 @@ def _mark_tuplets(events):
                 notations = _element(note, 'notations')
             _element(notations, 'tuplet', type=typ)
 
-def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False):
+def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False):
     """Write a beat-aligned MusicXML draft with independent voices and stable clefs."""
     destination = Path(destination)
     if not analysis_only and destination.exists():
@@ -647,17 +647,38 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         midi_inst = _element(score_part, 'midi-instrument', id=f'I{number}')
         _element(midi_inst, 'midi-channel', key[1] + 1)
         _element(midi_inst, 'midi-program', programs[key] + 1)
-        groups.append((number, staff_notes, is_piano))
+        groups.append((number, staff_notes, is_piano, key))
     if analysis_only:
         if analysis_out is not None and 'hands' not in analysis_out:
             raise ValueError('Hand-track export requires one piano instrument track.')
         return bpm
-    for number, staff_notes, is_piano in groups:
+    pedal_by_channel = defaultdict(list)
+    if notate_pedal:
+        from omnizart.desktop.smoothing import _tempo_map
+        pedal_midi = mido.MidiFile(str(source))
+        seconds_at = _tempo_map(pedal_midi)
+        for track in pedal_midi.tracks:
+            tick = 0
+            for message in track:
+                tick += message.time
+                if message.type == 'control_change' and message.control == 64 and message.channel != 9:
+                    position = max(0, round(beat_position(seconds_at(tick)) * 4 * unit_scale))
+                    pedal_by_channel[message.channel].append((position, message.value >= 64))
+    for number, staff_notes, is_piano, part_key in groups:
         part = _element(score, 'part', id=f'P{number}')
         lanes = _piano_voices(staff_notes) if is_piano else {staff: _voices(entries) for staff, entries in staff_notes.items()}
         if any(len(voices) > 4 for voices in lanes.values()):
             raise ValueError('This instrument requires more than four simultaneous voices. Enable Simplify score when needed and try again; the MIDI will be preserved.')
         last = max(end for entries in staff_notes.values() for _, end, _, _ in entries)
+        pedal_events = []
+        if is_piano and notate_pedal:
+            state = False
+            for position, pressed in sorted(pedal_by_channel[part_key[1]]):
+                if pressed != state:
+                    pedal_events.append((position, pressed))
+                    state = pressed
+            if pedal_events:
+                last = max(last, pedal_events[-1][0] + 1)
         count = (last + length - 1) // length
         for measure_no in range(count):
             left, right = measure_no * length, (measure_no + 1) * length
@@ -704,6 +725,15 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                     if offset:
                         _element(direction, 'offset', offset, sound='yes')
                     _element(direction, 'sound', tempo=f'{current_bpm:.6f}')
+            for position, pressed in pedal_events:
+                if left <= position < right:
+                    direction = _element(measure, 'direction', placement='below')
+                    dtype = _element(direction, 'direction-type')
+                    _element(dtype, 'pedal', type='start' if pressed else 'stop', line='yes')
+                    if position > left:
+                        _element(direction, 'offset', position - left, sound='yes')
+                    _element(direction, 'staff', 2)
+                    _element(direction, 'sound', **{'damper-pedal': 'yes' if pressed else 'no'})
             streams = [(staff, idx, lane) for staff, ls in lanes.items() for idx, lane in enumerate(ls)
                        if any(start < right and end > left for start, end, _ in lane)]
             for staff in staff_notes:

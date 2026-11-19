@@ -17,6 +17,17 @@ def note_events(track):
 
 
 class SmoothingTests(unittest.TestCase):
+    def test_pedal_cleanup_does_not_guess_without_pedal_data(self):
+        with TemporaryDirectory() as folder:
+            source, target = Path(folder) / 'raw.mid', Path(folder) / 'clean.mid'
+            midi = mido.MidiFile()
+            midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80),
+                                              mido.Message('note_off', note=60, time=480)]))
+            midi.save(source)
+            with self.assertWarnsRegex(UserWarning, 'no complete sustain-pedal'):
+                smooth_midi(source, target, join_notes=False, shorten_pedal=True)
+            self.assertEqual(note_events(mido.MidiFile(source).tracks[0]), note_events(mido.MidiFile(target).tracks[0]))
+
     def test_quiet_notes_are_removed_or_joined_to_a_matching_recent_note(self):
         with TemporaryDirectory() as folder:
             source, target = Path(folder) / 'raw.mid', Path(folder) / 'clean.mid'

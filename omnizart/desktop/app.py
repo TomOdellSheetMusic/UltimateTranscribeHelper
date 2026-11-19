@@ -309,6 +309,7 @@ class Application(ttk.Frame):
         self.minimum_short_note = tk.StringVar(value="40")
         self.remove_quiet_notes = tk.BooleanVar(value=False)
         self.quiet_velocity = tk.StringVar(value="15")
+        self.shorten_pedal_tails = tk.BooleanVar(value=False)
         self.keep_accompaniment = tk.BooleanVar(value=False)
         folders = read_folders()
         self.custom_stem_model.set(folders.get("custom_six_stem", ""))
@@ -344,6 +345,7 @@ class Application(ttk.Frame):
             "smooth_notes": self.smooth_notes, "smooth_gap": self.smooth_gap,
             "remove_short_notes": self.remove_short_notes, "minimum_short_note": self.minimum_short_note,
             "remove_quiet_notes": self.remove_quiet_notes, "quiet_velocity": self.quiet_velocity,
+            "shorten_pedal_tails": self.shorten_pedal_tails,
             "keep_accompaniment": self.keep_accompaniment,
         }
         valid_preferences = {
@@ -548,6 +550,10 @@ class Application(ttk.Frame):
         self.quiet_entry.pack(side="left")
         Tooltip(self.quiet_option, "Removes low-velocity notes before hand assignment and score export. A nearby quiet repeat of the same pitch is held instead when safe. Drums and vocal tracks are skipped.")
         Tooltip(self.quiet_entry, "Remove notes at or below this MIDI velocity (1–127). The default is 15; genuine soft notes may also be removed.")
+        self.pedal_cleanup_option = ttk.Checkbutton(card, text="Shorten likely pedal-held notes and show pedal",
+            variable=self.shorten_pedal_tails, style="App.TCheckbutton")
+        self.pedal_cleanup_option.grid(row=18, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        Tooltip(self.pedal_cleanup_option, "Estimates shorter key holds for notes ending at a sustain-pedal release and adds pedal markings to MusicXML. Requires MIDI pedal events; actual key releases cannot be recovered. Original MIDI is kept.")
 
         self.lint_option = ttk.Checkbutton(card, text="Create note review report", variable=self.lint_notes, style="App.TCheckbutton")
         self.lint_option.grid(row=16, column=0, sticky="w", pady=(10, 0))
@@ -874,6 +880,7 @@ class Application(ttk.Frame):
             self.smooth_option.configure(state="normal")
             self.short_option.configure(state="normal")
             self.quiet_option.configure(state="normal")
+            self.pedal_cleanup_option.configure(state="normal")
             self.update_smoothing_controls()
             self.update_separation_controls()
             is_fixed_piano = self.music_model.get() in ("Transkun (piano)", "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor")
@@ -957,6 +964,7 @@ class Application(ttk.Frame):
             self.short_entry.configure(state="disabled")
             self.quiet_option.configure(state="disabled")
             self.quiet_entry.configure(state="disabled")
+            self.pedal_cleanup_option.configure(state="disabled")
             self.advanced_button.configure(state="disabled")
             self.advanced.grid_remove()
             self.advanced_open = False
@@ -1956,6 +1964,8 @@ class Application(ttk.Frame):
                 cmd.extend(["--remove-short-ms", self.minimum_short_note.get().strip()])
             if self.remove_quiet_notes.get():
                 cmd.extend(["--remove-quiet-velocity", self.quiet_velocity.get().strip()])
+            if self.shorten_pedal_tails.get():
+                cmd.append("--shorten-pedal-tails")
             if self.include_vocals.get():
                 cmd.append("--include-vocals")
             if self.include_vocals.get() or self.remove_vocals.get():
