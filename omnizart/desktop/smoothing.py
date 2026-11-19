@@ -4,6 +4,86 @@ from collections import defaultdict
 from pathlib import Path
 
 import mido
+import warnings
+
+
+def _shorten_pedal_tails(midi):
+    """Shorten likely baked-in pedal tails at the next attack, retaining CC64.
+
+    Only notes ending at a pedal release are candidates. The true key release
+    cannot be recovered from MIDI, so this is an optional estimate.
+    """
+    at = _tempo_map(midi)
+    controls = defaultdict(list)
+    for track in midi.tracks:
+        tick = 0
+        for msg in track:
+            tick += msg.time
+            if msg.type == 'control_change' and msg.control == 64 and msg.channel != 9:
+                controls[msg.channel].append((tick, msg.value >= 64))
+    intervals = defaultdict(list)
+    for channel, events in controls.items():
+        down = None
+        for tick, pressed in sorted(events):
+            if pressed and down is None:
+                down = tick
+            elif not pressed and down is not None:
+                intervals[channel].append((down, tick))
+                down = None
+    if not any(intervals.values()):
+        warnings.warn('Pedal cleanup skipped: no complete sustain-pedal events were found in the MIDI.', UserWarning)
+        return 0
+    changed = 0
+    for track in midi.tracks:
+        if any(msg.type == 'track_name' and 'vocal' in msg.name.casefold() for msg in track):
+            continue
+        events, active, pairs, ambiguous, attacks = [], {}, [], set(), defaultdict(set)
+        tick = 0
+        for msg in track:
+            tick += msg.time
+            index = len(events)
+            events.append((tick, msg))
+            if msg.type not in ('note_on', 'note_off') or msg.channel == 9:
+                continue
+            key = (msg.channel, msg.note)
+            if msg.type == 'note_on' and msg.velocity:
+                attacks[msg.channel].add(tick)
+                if key in active:
+                    ambiguous.add(key)
+                active[key] = (tick, index)
+            elif key in active:
+                start, on_index = active.pop(key)
+                pairs.append((key, start, tick, on_index, index))
+            else:
+                ambiguous.add(key)
+        ambiguous.update(active)
+        attacks = {channel: sorted(values) for channel, values in attacks.items()}
+        replacements = {}
+        for (channel, pitch), start, end, _, off_index in pairs:
+            if (channel, pitch) in ambiguous:
+                continue
+            possible = next(((down, up) for down, up in intervals[channel]
+                             if down <= start < end <= up and at(up) - at(end) <= .02), None)
+            if possible is None:
+                continue
+            next_index = bisect_right(attacks[channel], start)
+            if next_index >= len(attacks[channel]):
+                continue
+            next_attack = attacks[channel][next_index]
+            if next_attack < end and at(next_attack) - at(start) >= .1:
+                replacements[off_index] = next_attack
+                changed += 1
+        if replacements:
+            ordered = sorted(((replacements.get(i, tick), i, msg) for i, (tick, msg) in enumerate(events)),
+                             key=lambda item: (item[0], 0 if item[1] in replacements else 1, item[1]))
+            last = 0
+            rewritten = mido.MidiTrack()
+            for tick, _, msg in ordered:
+                rewritten.append(msg.copy(time=tick - last))
+                last = tick
+            track[:] = rewritten
+    return changed
+
 
 def _tempo_map(midi):
     changes = [(0, 500000)]
@@ -61,7 +141,8 @@ def _expression_guards(midi):
     return protected
 
 
-def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=True, quiet_velocity=0):
+def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=True, quiet_velocity=0,
+                shorten_pedal=False):
     """Merge likely broken short notes, preserving other events and the source file.
 
     Skip percussion, vocal tracks, and passages with pedal or pitch bends. These
@@ -152,6 +233,9 @@ def smooth_midi(source, destination, max_gap_ms=30, min_note_ms=0, join_notes=Tr
                     rewritten.append(message.copy(time=tick - last_tick))
                     last_tick = tick
             track[:] = rewritten
+    if shorten_pedal:
+        shortened = _shorten_pedal_tails(midi)
+        warnings.warn(f'Pedal cleanup shortened {shortened} likely pedal-held note(s); review their durations.', UserWarning)
     try:
         with destination.open("xb") as stream:
             try:

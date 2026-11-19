@@ -214,12 +214,12 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             target = Path(str(target) + ".mid")
     if smooth_notes or remove_short_ms or remove_quiet_velocity or shorten_pedal_tails or lint_notes or score or musescore or compare_midi or split_hands:
         original_target = target
-    if smooth_notes or remove_short_ms or remove_quiet_velocity:
+    if smooth_notes or remove_short_ms or remove_quiet_velocity or shorten_pedal_tails:
         from omnizart.desktop.smoothing import smooth_midi
         cleaned = target.with_name(target.stem + '_smoothed.mid')
         try:
             merged = smooth_midi(target, cleaned, smooth_gap_ms, remove_short_ms, join_notes=smooth_notes,
-                                 quiet_velocity=remove_quiet_velocity)
+                                 quiet_velocity=remove_quiet_velocity, shorten_pedal=shorten_pedal_tails)
         except (OSError, ValueError) as exc:
             raise click.ClickException(f'Original MIDI was saved, but smoothing failed: {exc}') from exc
         click.echo(f'Cleaned MIDI saved to {cleaned} ({merged} fragments joined). Original preserved.')

@@ -554,7 +554,7 @@ class Application(ttk.Frame):
             variable=self.shorten_pedal_tails, style="App.TCheckbutton",
             command=self.update_pedal_cleanup_controls)
         self.pedal_cleanup_option.grid(row=18, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        Tooltip(self.pedal_cleanup_option, "Estimates shorter key holds at the next attack in the same hand and writes pedal markings to MusicXML. Open the MusicXML for pedal notation; MIDI import may hide pedal markings. Requires MIDI pedal events; original MIDI is kept.")
+        Tooltip(self.pedal_cleanup_option, "Estimates shorter key holds at the next attack and writes pedal markings to MusicXML. Open the MusicXML for pedal notation; MIDI import may hide pedal markings. Requires MIDI pedal events; original MIDI is kept.")
 
         self.lint_option = ttk.Checkbutton(card, text="Create note review report", variable=self.lint_notes, style="App.TCheckbutton")
         self.lint_option.grid(row=16, column=0, sticky="w", pady=(10, 0))
