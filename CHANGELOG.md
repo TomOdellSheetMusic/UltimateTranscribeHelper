@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.7 - 2026-11-19
+
+- Order combined MIDI tracks and channels from left hand to right hand to
+  vocals, while keeping vocals above piano in MusicXML.
+
 ## 0.6.6 - 2026-11-19
 
 - Add ROSVOT singing transcription with optional NVIDIA acceleration, and offer
