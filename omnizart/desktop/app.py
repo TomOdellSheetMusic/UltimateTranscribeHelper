@@ -490,7 +490,7 @@ class Application(ttk.Frame):
         self.keep_option = ttk.Checkbutton(card, text="Keep accompaniment WAV", variable=self.keep_accompaniment,
                                            style="App.TCheckbutton", state="disabled")
         self.keep_option.grid(row=8, column=1, sticky="w", padx=(14, 0), pady=(16, 0))
-        Tooltip(self.separation_option, "Uses the included CPU model to separate vocals. It can help with piano and voice, "
+        Tooltip(self.separation_option, "Uses the selected vocal separation model. It can help with piano and voice, "
                 "but can also remove some instruments or introduce artifacts. Compare both results.")
         self.piano_only_option = ttk.Checkbutton(card, text="Separate a stem before transcribing",
                                                 variable=self.piano_only, style="App.TCheckbutton",
@@ -510,7 +510,7 @@ class Application(ttk.Frame):
         self.vocal_option.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
         Tooltip(self.vocal_option, "Separates and transcribes the sung melody into its own MIDI track. "
                 "This takes longer, and both tracks may need editing.")
-        self.vocal_backend_label = ttk.Label(card, text="Vocal reduction / shared model backend", style="CardLabel.TLabel")
+        self.vocal_backend_label = ttk.Label(card, text="Vocal separation model type", style="CardLabel.TLabel")
         self.vocal_backend_label.grid(row=11, column=0, sticky="w", pady=(10, 2))
         self.vocal_backend_picker = ttk.Combobox(card, textvariable=self.vocal_backend,
             values=['Built-in', 'pymss'], state='readonly', style='App.TCombobox')
@@ -527,7 +527,7 @@ class Application(ttk.Frame):
         self.separation_models_button = ttk.Button(card, text="Manage separation models...", style="Link.TButton",
                                                    command=self.show_separation_models)
         self.separation_models_button.grid(row=12, column=1, sticky="w", padx=(14, 0))
-        self.vocal_pymss_button = ttk.Button(card, text='Choose pymss model...', style='Link.TButton',
+        self.vocal_pymss_button = ttk.Button(card, text='Browse pymss models...', style='Secondary.TButton',
                                             command=lambda: self.show_pymss_models('vocal'))
         self.vocal_pymss_button.grid(row=12, column=0, sticky='w')
         self.vocal_pymss_button.grid_remove()
@@ -551,8 +551,8 @@ class Application(ttk.Frame):
         self.vocal_track_manage = ttk.Button(self.vocal_track_settings, text='Manage separation models...',
             style='Link.TButton', command=lambda: self.show_separation_models('track'))
         self.vocal_track_manage.grid(row=1, column=1, sticky='w', padx=(14, 0), pady=(6, 0))
-        self.vocal_track_pymss_button = ttk.Button(self.vocal_track_settings, text='Choose pymss model...',
-            style='Link.TButton', command=lambda: self.show_pymss_models('track'))
+        self.vocal_track_pymss_button = ttk.Button(self.vocal_track_settings, text='Browse pymss models...',
+            style='Secondary.TButton', command=lambda: self.show_pymss_models('track'))
         self.vocal_track_pymss_button.grid(row=1, column=0, sticky='w', pady=(6, 0))
         self.vocal_track_pymss_label = ttk.Label(self.vocal_track_settings, text='', style='CardHint.TLabel')
         self.vocal_track_pymss_label.grid(row=2, column=0, columnspan=2, sticky='w')
@@ -1066,6 +1066,16 @@ class Application(ttk.Frame):
         music_mode = self.mode.get() == "Piano and instruments"
         enabled = music_mode and self.remove_vocals.get()
         track_active = music_mode and self.include_vocals.get()
+        self.vocal_backend_label.configure(text=('Vocal reduction model type' if self.remove_vocals.get()
+                                                 else 'Vocal track model type'))
+        track_choices = ['Built-in', 'pymss']
+        if self.remove_vocals.get():
+            track_choices.insert(0, 'Same as vocal reduction')
+        if self.piano_only.get():
+            track_choices.insert(0, 'Same as selected stem')
+        if track_active and self.vocal_track_backend.get() not in track_choices:
+            self.vocal_track_backend.set('Built-in')
+        self.vocal_track_backend_picker.configure(values=track_choices)
         track_same = self.vocal_track_backend.get() == 'Same as vocal reduction'
         show_vocal_settings = music_mode and (self.remove_vocals.get() or (track_active and track_same))
         self.keep_option.configure(state="normal" if enabled else "disabled")
@@ -1149,6 +1159,8 @@ class Application(ttk.Frame):
             self.input_is_piano.set(False)
             if self.piano_only.get() and self.vocal_track_backend.get() == 'Same as vocal reduction':
                 self.vocal_track_backend.set('Same as selected stem')
+            elif not self.piano_only.get() and not self.remove_vocals.get() and self.vocal_track_backend.get() == 'Same as vocal reduction':
+                self.vocal_track_backend.set('Built-in')
         self.update_separation_controls()
 
     def update_reduction_controls(self):
@@ -1736,13 +1748,23 @@ class Application(ttk.Frame):
                 self.status.set("Model path could not be saved for next time.")
 
     def show_pymss_models(self, target='stem'):
-        self.pymss_dialog_target = target
         from omnizart.desktop.optional_models import install, ready
         if not ready('pymss'):
             if self.optional_installing:
+                messagebox.showinfo('pymss setup', 'A model runtime is already being installed. Please wait for it to finish.', parent=self.master)
                 return
+            self.pymss_dialog_target = target
             self.optional_installing = True
             self.status.set('Installing the optional pymss CPU runtime; this may take several minutes...')
+            progress = tk.Toplevel(self.master)
+            progress.title('Preparing pymss model browser')
+            progress.transient(self.master)
+            ttk.Label(progress, text='Preparing the pymss model browser...').pack(anchor='w', padx=20, pady=(18, 6))
+            ttk.Label(progress, text='Installing its runtime on first use. This may take several minutes.').pack(anchor='w', padx=20)
+            bar = ttk.Progressbar(progress, mode='indeterminate', length=320)
+            bar.pack(fill='x', padx=20, pady=(12, 18))
+            bar.start(12)
+            self.pymss_setup_dialog = progress
             def install_pymss():
                 try:
                     install('pymss')
@@ -1761,6 +1783,7 @@ class Application(ttk.Frame):
         dialog.title('pymss models')
         dialog.geometry('760x500')
         search = tk.StringVar()
+        download_status = tk.StringVar(value='Select a model, download it if needed, then choose Use selected model.')
         vocal_filter = tk.BooleanVar(value=target in ('vocal', 'track'))
         ttk.Label(dialog, text='Search models by name or category').pack(anchor='w', padx=12, pady=(12, 0))
         ttk.Entry(dialog, textvariable=search).pack(fill='x', padx=12, pady=6)
@@ -1809,19 +1832,21 @@ class Application(ttk.Frame):
                 return
             source = self.pymss_source.get()
             self.status.set(f'Downloading pymss model: {name}')
+            download_status.set(f'Downloading {name}. Please wait...')
             def work():
                 from omnizart.desktop.pymss_backend import download as download_model
                 try:
                     download_model(name, source)
-                    self.messages.put(('pymss_model_done', (name, '')))
+                    self.messages.put(('pymss_model_done', (name, '', dialog, download_status)))
                 except Exception as exc:
-                    self.messages.put(('pymss_model_done', (name, str(exc))))
+                    self.messages.put(('pymss_model_done', (name, str(exc), dialog, download_status)))
             threading.Thread(target=work, daemon=True).start()
         buttons = ttk.Frame(dialog)
         buttons.pack(fill='x', padx=12, pady=12)
         ttk.Button(buttons, text='Use selected model', command=choose).pack(side='left')
         ttk.Button(buttons, text='Download selected', command=download).pack(side='left', padx=6)
         ttk.Button(buttons, text='Import custom model...', command=lambda: self.import_pymss_model(dialog, target)).pack(side='left')
+        ttk.Label(dialog, textvariable=download_status).pack(anchor='w', padx=12, pady=(0, 10))
 
     def import_pymss_model(self, parent, target='stem'):
         from tkinter import simpledialog
@@ -2297,6 +2322,10 @@ class Application(ttk.Frame):
                     continue
                 if kind == 'pymss_install_done':
                     self.optional_installing = False
+                    progress = getattr(self, 'pymss_setup_dialog', None)
+                    if progress is not None and progress.winfo_exists():
+                        progress.destroy()
+                    self.pymss_setup_dialog = None
                     if value:
                         self.status.set('Could not install pymss.')
                         messagebox.showerror('pymss setup failed', value)
@@ -2305,7 +2334,9 @@ class Application(ttk.Frame):
                         self.show_pymss_models(getattr(self, 'pymss_dialog_target', 'stem'))
                     continue
                 if kind == 'pymss_model_done':
-                    name, error = value
+                    name, error, dialog, download_status = value
+                    if dialog.winfo_exists():
+                        download_status.set(f'Download failed: {name}' if error else f'{name} is ready. Choose Use selected model.')
                     if error:
                         self.status.set(f'Could not download {name}.')
                         messagebox.showerror('pymss model download failed', error)

@@ -116,8 +116,8 @@ class RepeatedRunsTests(unittest.TestCase):
                     app.align_bars.set(False)
                     app.source.set(str(audio))
                     app.destination.set(str(folder))
-                    app.include_vocals.set(True)
-                    app.update_vocal_controls()
+                    app.separation_option.invoke()
+                    app.vocal_option.invoke()
                     app.vocal_backend.set('pymss')
                     app.vocal_pymss_model.set('vocal-model')
                     app.use_gpu.set(True)
@@ -140,6 +140,76 @@ class RepeatedRunsTests(unittest.TestCase):
                     self.assertEqual(app.separator_picker.winfo_manager(), 'grid')
                 finally:
                     root.destroy()
+
+    def test_vocal_pymss_browser_buttons_open_and_select_for_each_role(self):
+        catalog = [{'name': 'voice-model', 'target_stem': 'vocals/other'}]
+        with TemporaryDirectory() as directory, \
+             patch('omnizart.desktop.app.folder_settings_path', return_value=Path(directory) / 'folders.json'), \
+             patch('omnizart.desktop.optional_models.ready', return_value=True), \
+             patch('omnizart.desktop.pymss_backend.catalog', return_value=catalog):
+            root = tk.Tk()
+            try:
+                app = Application(root)
+                app.sections.select(0)
+                app.separation_option.invoke()
+                app.vocal_backend.set('pymss')
+                app.vocal_backend_picker.event_generate('<<ComboboxSelected>>')
+                root.update()
+                self.assertTrue(app.vocal_pymss_button.winfo_ismapped())
+                self.assertLessEqual(app.vocal_pymss_button.winfo_rooty() + app.vocal_pymss_button.winfo_height(),
+                                     app.sections.winfo_rooty() + app.sections.winfo_height())
+                app.vocal_pymss_button.invoke()
+                dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+                listing = next(w for w in dialog.winfo_children() if isinstance(w, tk.Listbox))
+                listing.selection_set(0)
+                next(w for frame in dialog.winfo_children() for w in frame.winfo_children()
+                     if isinstance(w, tk.ttk.Button) and w.cget('text') == 'Use selected model').invoke()
+                self.assertEqual(app.vocal_pymss_model.get(), 'voice-model')
+                app.vocal_option.invoke()
+                app.vocal_track_backend.set('pymss')
+                app.vocal_track_backend_picker.event_generate('<<ComboboxSelected>>')
+                root.update()
+                self.assertTrue(app.vocal_track_pymss_button.winfo_ismapped())
+                self.assertLessEqual(app.vocal_track_pymss_button.winfo_rooty() + app.vocal_track_pymss_button.winfo_height(),
+                                     app.sections.winfo_rooty() + app.sections.winfo_height())
+                app.vocal_track_pymss_button.invoke()
+                dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+                listing = next(w for w in dialog.winfo_children() if isinstance(w, tk.Listbox))
+                listing.selection_set(0)
+                next(w for frame in dialog.winfo_children() for w in frame.winfo_children()
+                     if isinstance(w, tk.ttk.Button) and w.cget('text') == 'Use selected model').invoke()
+                self.assertEqual(app.vocal_track_pymss_model.get(), 'voice-model')
+            finally:
+                root.destroy()
+
+    def test_first_pymss_use_shows_setup_and_opens_requested_browser(self):
+        with TemporaryDirectory() as directory, \
+             patch('omnizart.desktop.app.folder_settings_path', return_value=Path(directory) / 'folders.json'), \
+             patch('omnizart.desktop.optional_models.ready', side_effect=[False, True]), \
+             patch('omnizart.desktop.optional_models.install') as install, \
+             patch('omnizart.desktop.app.threading.Thread') as thread, \
+             patch('omnizart.desktop.pymss_backend.catalog', return_value=[{'name': 'voice', 'target_stem': 'vocals'}]):
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                app = Application(root)
+                app.vocal_option.invoke()
+                app.vocal_track_backend.set('pymss')
+                app.update_separation_controls()
+                app.vocal_track_pymss_button.invoke()
+                self.assertTrue(app.pymss_setup_dialog.winfo_exists())
+                thread.call_args.kwargs['target']()
+                app.poll()
+                install.assert_called_once_with('pymss')
+                self.assertIsNone(app.pymss_setup_dialog)
+                dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+                listing = next(w for w in dialog.winfo_children() if isinstance(w, tk.Listbox))
+                listing.selection_set(0)
+                next(w for frame in dialog.winfo_children() for w in frame.winfo_children()
+                     if isinstance(w, tk.ttk.Button) and w.cget('text') == 'Use selected model').invoke()
+                self.assertEqual(app.vocal_track_pymss_model.get(), 'voice')
+            finally:
+                root.destroy()
 
     def test_vocal_model_browser_filters_and_keeps_stem_selection_separate(self):
         with TemporaryDirectory() as directory:
