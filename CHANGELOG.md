@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.4 - 2026-11-19
+
+### Features
+- Add pymss as a vocal-separation backend, with independent or shared model
+  selection for vocal reduction, instrument stems, and the vocal MIDI track.
+- Allow piano and vocal stems from one recording to be transcribed into the
+  same MIDI and MusicXML, reusing a separation pass when possible.
+
 ## 0.6.3 - 2026-05-31
 
 **Source separation and CLI speed optimization release.** Includes native in-code `sherpa-onnx` source separation backend integration and CLI startup optimization.
