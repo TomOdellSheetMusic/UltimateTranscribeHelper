@@ -6,6 +6,12 @@ integrated into the app. Model-specific Sirens MIDIs are in the local ignored
 `dist/hand-model-benchmark/sirens-exact/` directory; the source files and downloaded
 model environments are also local and are not part of the repository.
 
+**Listening and visual review:** The user compared the three alternative Sirens
+hand MIDIs with the existing Omnizart output and reported that all three were
+worse. The score-derived agreement figures below do not override that feedback
+or establish performance on this transcription. Keep the existing model;
+the alternatives have not been integrated.
+
 ## Inputs and fairness
 
 All Sirens models received the exact 2,459-note
