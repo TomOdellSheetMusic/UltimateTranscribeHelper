@@ -54,10 +54,11 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--remove-short-ms", type=click.FloatRange(0, 200), default=0, help="Also remove notes shorter than this duration; 0 disables.")
 @click.option("--remove-quiet-velocity", type=click.IntRange(0, 127), default=0, help="Remove notes at or below this MIDI velocity; 0 disables.")
 @click.option("--shorten-pedal-tails", is_flag=True, help="Estimate shorter key holds for notes ending at pedal release and notate sustain pedal.")
+@click.option("--clarify-pedal-melody", is_flag=True, help="Shorten notes at the next attack in the same hand when the pedal sustains them.")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
                save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
-               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails):
+               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
     """Transcribe a single audio and output as a MIDI file.
 
     This will output a MIDI file with the same name as the given audio, except the
@@ -81,6 +82,8 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
     selected_stem = 'piano' if piano_only else (separate_stem.lower() if separate_stem else None)
     piano_output = (input_is_piano or selected_stem == 'piano' or model_path in
                     ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
+    if clarify_pedal_melody:
+        shorten_pedal_tails = True
     if shorten_pedal_tails:
         score = True
         if piano_output:
@@ -241,6 +244,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
             score_options = dict(tempo=score_tempo, score_key=score_key, neural_staff=neural_staff,
                                audio=input_audio, align_bars=align_bars, downbeat=score_downbeat,
                                beats_per_bar=int(score_meter) if score_meter else None, notate_pedal=shorten_pedal_tails,
+                               clarify_pedal_melody=clarify_pedal_melody,
                                piano=(split_hands or input_is_piano or selected_stem == 'piano' or model_path in
                                       ("Piano", "PianoV2", "Transkun (piano)",
                                        "Transkun V2 Aug", "Pedal Piano")))

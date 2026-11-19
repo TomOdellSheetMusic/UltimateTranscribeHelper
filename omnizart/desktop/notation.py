@@ -5,6 +5,7 @@ allocated to separate voices so that a held note need not be tied at every
 attack in another voice. The original MIDI is never modified.
 """
 from collections import defaultdict, deque
+from bisect import bisect_right
 import math
 import subprocess
 import warnings
@@ -462,7 +463,7 @@ def _mark_tuplets(events):
                 notations = _element(note, 'notations')
             _element(notations, 'tuplet', type=typ)
 
-def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False):
+def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False, clarify_pedal_melody=False):
     """Write a beat-aligned MusicXML draft with independent voices and stable clefs."""
     destination = Path(destination)
     if not analysis_only and destination.exists():
@@ -569,6 +570,20 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
     original_length = length
     length *= unit_scale
     first_left *= unit_scale
+    pedal_by_channel = defaultdict(list)
+    pedal_positions = defaultdict(list)
+    if notate_pedal or clarify_pedal_melody:
+        from omnizart.desktop.smoothing import _tempo_map
+        pedal_midi = mido.MidiFile(str(source))
+        seconds_at = _tempo_map(pedal_midi)
+        for track in pedal_midi.tracks:
+            tick = 0
+            for message in track:
+                tick += message.time
+                if message.type == 'control_change' and message.control == 64 and message.channel != 9:
+                    position = max(0, beat_position(seconds_at(tick)) * 4 * unit_scale)
+                    pedal_positions[message.channel].append((position, message.value >= 64))
+                    pedal_by_channel[message.channel].append((round(position), message.value >= 64))
     score = ET.Element('score-partwise', version='4.0')
     work = _element(score, 'work')
     _element(work, 'work-title', Path(source).stem)
@@ -601,6 +616,41 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                                 for start, end, pitch, velocity in quantized]
             preferences = predict_staff(prediction_notes, original_length, denominator)
         staff_notes = _assign_piano_hands(quantized, length, preferences, unit_scale) if is_piano else {1: quantized}
+        if clarify_pedal_melody and is_piano:
+            intervals, down = [], None
+            for position, pressed in sorted(pedal_positions[key[1]], key=lambda event: event[0]):
+                if pressed and down is None:
+                    down = position
+                elif not pressed and down is not None:
+                    intervals.append((down, position))
+                    down = None
+            if not intervals:
+                warnings.warn('Pedal melody cleanup skipped: no complete sustain-pedal events were found.', UserWarning)
+            indices = defaultdict(deque)
+            for note, index in indexed:
+                indices[note].append(index)
+            replacements = {}
+            for staff, assigned in staff_notes.items():
+                attacks = sorted({note[0] for note in assigned})
+                chords = {(note[0], note[1]) for note in assigned}
+                dense_points = [attack for attack in attacks
+                                if sum(start <= attack < end for start, end in chords) > 4]
+                revised = []
+                for note in assigned:
+                    index = indices[note].popleft()
+                    start, end, pitch, velocity = note
+                    next_index = bisect_right(attacks, start)
+                    next_attack = attacks[next_index] if next_index < len(attacks) else None
+                    if (next_attack is not None and next_attack < end and
+                            any(next_attack <= point < end for point in dense_points) and
+                            any(down <= next_attack < up and end <= up for down, up in intervals)):
+                        note = (start, next_attack, pitch, velocity)
+                        replacements[index] = note
+                    revised.append(note)
+                staff_notes[staff] = revised
+            indexed = [(replacements.get(index, note), index) for note, index in indexed]
+            if intervals:
+                warnings.warn(f'Pedal melody cleanup shortened {len(replacements)} note(s); review the notation.', UserWarning)
         if analysis_out is not None and is_piano:
             indices = defaultdict(deque)
             for note, index in indexed:
@@ -652,18 +702,6 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
         if analysis_out is not None and 'hands' not in analysis_out:
             raise ValueError('Hand-track export requires one piano instrument track.')
         return bpm
-    pedal_by_channel = defaultdict(list)
-    if notate_pedal:
-        from omnizart.desktop.smoothing import _tempo_map
-        pedal_midi = mido.MidiFile(str(source))
-        seconds_at = _tempo_map(pedal_midi)
-        for track in pedal_midi.tracks:
-            tick = 0
-            for message in track:
-                tick += message.time
-                if message.type == 'control_change' and message.control == 64 and message.channel != 9:
-                    position = max(0, round(beat_position(seconds_at(tick)) * 4 * unit_scale))
-                    pedal_by_channel[message.channel].append((position, message.value >= 64))
     for number, staff_notes, is_piano, part_key in groups:
         part = _element(score, 'part', id=f'P{number}')
         lanes = _piano_voices(staff_notes) if is_piano else {staff: _voices(entries) for staff, entries in staff_notes.items()}

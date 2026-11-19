@@ -43,6 +43,83 @@ def absolute(track):
 
 
 class HandMidiTests(unittest.TestCase):
+    def test_pedal_melody_cleanup_reduces_overfull_chords(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / 'dense.mid'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([
+                mido.Message('control_change', control=64, value=127),
+                *[mido.Message('note_on', note=pitch, velocity=80) for pitch in (60, 62, 64, 65, 67)],
+                mido.Message('note_on', note=48, velocity=80, time=240),
+                mido.Message('note_off', note=48, time=120),
+                mido.Message('note_on', note=72, velocity=80, time=120),
+                mido.Message('note_off', note=72, time=120),
+                mido.Message('note_off', note=60, time=360),
+                mido.Message('note_off', note=62, time=120),
+                mido.Message('note_off', note=64, time=120),
+                mido.Message('note_off', note=65, time=120),
+                mido.Message('note_off', note=67, time=120),
+                mido.Message('control_change', control=64, value=0, time=60)]))
+            midi.save(source)
+            analysis = {}
+            def hands(entries, *args, **kwargs):
+                return {1: [note for note in entries if note[2] != 48],
+                        2: [note for note in entries if note[2] == 48]}
+            with patch('omnizart.desktop.notation._assign_piano_hands', side_effect=hands):
+                with self.assertWarnsRegex(UserWarning, 'shortened 5'):
+                    export_score(source, Path(folder) / 'unused.musicxml', tempo=120, score_key='C',
+                                 clarify_pedal_melody=True, analysis_out=analysis, analysis_only=True)
+            self.assertEqual([position for position in analysis['positions'] if position[0] == 0], [(0, 1)] * 5)
+
+    def test_pedal_melody_does_not_shorten_when_pedal_ends_too_early(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / 'input.mid'
+            midi = mido.MidiFile(ticks_per_beat=480)
+            midi.tracks.append(mido.MidiTrack([
+                mido.Message('control_change', control=64, value=127),
+                mido.Message('note_on', note=72, velocity=80),
+                mido.Message('note_on', note=74, velocity=80, time=240),
+                mido.Message('control_change', control=64, value=0, time=240),
+                mido.Message('note_off', note=74, time=120),
+                mido.Message('note_off', note=72, time=120)]))
+            midi.save(source)
+            analysis = {}
+            with self.assertWarnsRegex(UserWarning, 'shortened 0'):
+                export_score(source, Path(folder) / 'unused.musicxml', tempo=120, score_key='C',
+                             clarify_pedal_melody=True, analysis_out=analysis, analysis_only=True)
+            self.assertEqual(analysis['positions'][1], (0, 1.5))
+
+    def test_pedal_melody_cleanup_leaves_sparse_passages_and_preserves_pedal(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(_audio, _model, target, *args):
+                midi = mido.MidiFile(ticks_per_beat=480)
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('control_change', control=64, value=127),
+                    mido.Message('note_on', note=72, velocity=80),
+                    mido.Message('note_on', note=48, velocity=80, time=240),
+                    mido.Message('note_off', note=48, time=120),
+                    mido.Message('note_on', note=74, velocity=80, time=120),
+                    mido.Message('note_off', note=72, time=240),
+                    mido.Message('note_off', note=74, time=120),
+                    mido.Message('control_change', control=64, value=0, time=120)]))
+                midi.save(str(target) + '.mid')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.svsep.predict_staff', return_value=[1, 2, 1]):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                    '--model-path', 'Piano', '--neural-staff', '--score-tempo', '120',
+                    '--score-key', 'C', '--clarify-pedal-melody'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            midi = mido.MidiFile(output.with_name('result_hands.mid'))
+            events = [event for track in midi.tracks for event in absolute(track)]
+            self.assertIn((720, 72), [(tick, msg.note) for tick, msg in events if msg.type == 'note_off'])
+            self.assertTrue(any(msg.type == 'control_change' and msg.control == 64 and msg.value == 127 for _, msg in events))
+            xml = ET.parse(output.with_suffix('.musicxml'))
+            self.assertEqual(len(xml.findall('.//pedal')), 2)
+            self.assertEqual(next(n for n in xml.findall('.//note[pitch]')
+                                  if n.findtext('pitch/step') == 'C' and n.findtext('pitch/octave') == '5').findtext('duration'), '6')
+
     def test_all_cleanup_options_reach_the_final_hands_together(self):
         with TemporaryDirectory() as folder:
             audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'

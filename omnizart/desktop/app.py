@@ -310,6 +310,7 @@ class Application(ttk.Frame):
         self.remove_quiet_notes = tk.BooleanVar(value=False)
         self.quiet_velocity = tk.StringVar(value="15")
         self.shorten_pedal_tails = tk.BooleanVar(value=False)
+        self.clarify_pedal_melody = tk.BooleanVar(value=False)
         self.keep_accompaniment = tk.BooleanVar(value=False)
         folders = read_folders()
         self.custom_stem_model.set(folders.get("custom_six_stem", ""))
@@ -346,6 +347,7 @@ class Application(ttk.Frame):
             "remove_short_notes": self.remove_short_notes, "minimum_short_note": self.minimum_short_note,
             "remove_quiet_notes": self.remove_quiet_notes, "quiet_velocity": self.quiet_velocity,
             "shorten_pedal_tails": self.shorten_pedal_tails,
+            "clarify_pedal_melody": self.clarify_pedal_melody,
             "keep_accompaniment": self.keep_accompaniment,
         }
         valid_preferences = {
@@ -555,6 +557,10 @@ class Application(ttk.Frame):
             command=self.update_pedal_cleanup_controls)
         self.pedal_cleanup_option.grid(row=18, column=0, columnspan=2, sticky="w", pady=(10, 0))
         Tooltip(self.pedal_cleanup_option, "Estimates shorter key holds at the next attack and writes pedal markings to MusicXML. Open the MusicXML for pedal notation; MIDI import may hide pedal markings. Requires MIDI pedal events; original MIDI is kept.")
+        self.pedal_melody_option = ttk.Checkbutton(card, text="Clarify melodies sustained by pedal (experimental)",
+            variable=self.clarify_pedal_melody, style="App.TCheckbutton", command=self.update_pedal_cleanup_controls)
+        self.pedal_melody_option.grid(row=19, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        Tooltip(self.pedal_melody_option, "In overcrowded passages, shortens overlapping notes at the next attack in the same hand when the sustain pedal covers their original release. The pedal remains in the final MIDI and MusicXML. Intentional key holds can be shortened; review the result.")
 
         self.lint_option = ttk.Checkbutton(card, text="Create note review report", variable=self.lint_notes, style="App.TCheckbutton")
         self.lint_option.grid(row=16, column=0, sticky="w", pady=(10, 0))
@@ -882,6 +888,7 @@ class Application(ttk.Frame):
             self.short_option.configure(state="normal")
             self.quiet_option.configure(state="normal")
             self.pedal_cleanup_option.configure(state="normal")
+            self.pedal_melody_option.configure(state="normal")
             self.update_smoothing_controls()
             self.update_separation_controls()
             is_fixed_piano = self.music_model.get() in ("Transkun (piano)", "Transkun V2 Aug", "Pedal Piano", "YourMT3", "MuScriptor")
@@ -966,6 +973,7 @@ class Application(ttk.Frame):
             self.quiet_option.configure(state="disabled")
             self.quiet_entry.configure(state="disabled")
             self.pedal_cleanup_option.configure(state="disabled")
+            self.pedal_melody_option.configure(state="disabled")
             self.advanced_button.configure(state="disabled")
             self.advanced.grid_remove()
             self.advanced_open = False
@@ -1034,6 +1042,8 @@ class Application(ttk.Frame):
         self.quiet_entry.configure(state="normal" if quiet_enabled else "disabled")
 
     def update_pedal_cleanup_controls(self):
+        if self.clarify_pedal_melody.get():
+            self.shorten_pedal_tails.set(True)
         if self.shorten_pedal_tails.get():
             self.musescore_export.set(True)
 
@@ -1714,7 +1724,7 @@ class Application(ttk.Frame):
         piano_selected = (self.input_is_piano.get() or (self.piano_only.get() and self.stem_choice.get().strip().lower() == 'piano') or
                           selected_model in ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
         final_hands = self.split_hands.get() or (piano_selected and (
-            self.neural_staff.get() or self.align_bars.get() or self.simplify_score.get() or self.shorten_pedal_tails.get() or
+            self.neural_staff.get() or self.align_bars.get() or self.simplify_score.get() or self.shorten_pedal_tails.get() or self.clarify_pedal_melody.get() or
             self.score_tempo.get().strip().lower() != 'auto' or self.score_key.get() != 'Auto' or
             self.score_meter.get() != 'Auto' or self.score_downbeat.get().strip().lower() != 'auto'))
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)
@@ -1971,6 +1981,8 @@ class Application(ttk.Frame):
                 cmd.extend(["--remove-quiet-velocity", self.quiet_velocity.get().strip()])
             if self.shorten_pedal_tails.get():
                 cmd.append("--shorten-pedal-tails")
+            if self.clarify_pedal_melody.get():
+                cmd.append("--clarify-pedal-melody")
             if self.include_vocals.get():
                 cmd.append("--include-vocals")
             if self.include_vocals.get() or self.remove_vocals.get():
