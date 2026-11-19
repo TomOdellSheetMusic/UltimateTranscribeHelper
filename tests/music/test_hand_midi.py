@@ -56,11 +56,13 @@ class HandMidiTests(unittest.TestCase):
                     mido.Message('note_on', note=64, velocity=80, time=10), mido.Message('note_off', note=64, time=10),
                     mido.Message('note_on', note=65, velocity=80, time=10), mido.Message('note_off', note=65, time=100)]))
                 midi.save(str(target) + '.mid')
-            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub):
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]) as neural:
                 result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
-                    '--model-path', 'Piano', '--split-hands', '--smooth-notes', '--smooth-gap-ms', '30',
+                    '--model-path', 'Piano', '--split-hands', '--neural-staff', '--smooth-notes', '--smooth-gap-ms', '30',
                     '--remove-short-ms', '40', '--remove-quiet-velocity', '15'])
             self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual([entry[2] for entry in neural.call_args.args[0]], [60, 65])
             for name in ('result_smoothed.mid', 'result_hands.mid'):
                 midi = mido.MidiFile(Path(folder) / name)
                 self.assertEqual(sorted(m.note for t in midi.tracks for m in t if m.type == 'note_on' and m.velocity), [60, 65])
