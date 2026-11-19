@@ -298,6 +298,8 @@ class Application(ttk.Frame):
         self.score_meter = tk.StringVar(value="Auto")
         self.simplify_score = tk.BooleanVar(value=False)
         self.neural_staff = tk.BooleanVar(value=False)
+        self.prefer_right_octave = tk.BooleanVar(value=False)
+        self.move_left_chords = tk.BooleanVar(value=False)
         self.split_hands = tk.BooleanVar(value=False)
         self.musescore_export = tk.BooleanVar(value=False)
         self.pdf_export = tk.BooleanVar(value=False)
@@ -341,6 +343,7 @@ class Application(ttk.Frame):
             "score_tempo": self.score_tempo, "score_key": self.score_key, "align_bars": self.align_bars,
             "score_downbeat": self.score_downbeat, "score_meter": self.score_meter,
             "simplify_score": self.simplify_score, "neural_staff": self.neural_staff,
+            "prefer_right_octave": self.prefer_right_octave, "move_left_chords": self.move_left_chords,
             "split_hands": self.split_hands, "musescore_export": self.musescore_export,
             "pdf_export": self.pdf_export, "lint_notes": self.lint_notes,
             "smooth_notes": self.smooth_notes, "smooth_gap": self.smooth_gap,
@@ -598,6 +601,14 @@ class Application(ttk.Frame):
         self.neural_staff_option = ttk.Checkbutton(card, text="Experimental: neural piano hand assignment", variable=self.neural_staff, style="App.TCheckbutton")
         self.neural_staff_option.grid(row=21, column=0, columnspan=2, sticky="w", pady=(10, 0))
         Tooltip(self.neural_staff_option, "Uses Piano SVSep on CPU for the final MIDI hand tracks and optional score, balanced with hand reach. First use installs the model. Results still require review.")
+        self.right_octave_option = ttk.Checkbutton(card, text="Prefer right hand for nearby simultaneous notes",
+            variable=self.prefer_right_octave, style="App.TCheckbutton", command=self.update_octave_controls)
+        self.right_octave_option.grid(row=25, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        Tooltip(self.right_octave_option, "After hand assignment, move a simultaneous left-hand note up to an octave below the highest new right-hand note if the right hand can hold all overlapping notes within an octave and five fingers. This is an estimate; review the result.")
+        self.move_left_chords_option = ttk.Checkbutton(card, text="Also consider notes from left-hand chords",
+            variable=self.move_left_chords, style="App.TCheckbutton")
+        self.move_left_chords_option.grid(row=26, column=0, columnspan=2, sticky="w", padx=(20, 0), pady=(6, 0))
+        Tooltip(self.move_left_chords_option, "Allows the octave adjustment to split or move a simultaneous left-hand chord. This can also move intentional accompaniment notes.")
         self.align_bars_option = ttk.Checkbutton(card, text="Align bars to audio beats", variable=self.align_bars, style="App.TCheckbutton")
         self.align_bars_option.grid(row=22, column=0, sticky="w", pady=(10, 0))
         Tooltip(self.align_bars_option, "Detects beats and downbeats using Beat This. The final piano MIDI and optional score share the beat grid. First use installs the model; review the result.")
@@ -877,6 +888,8 @@ class Application(ttk.Frame):
             self.score_option.configure(state="normal")
             self.score_simplify_option.configure(state="normal")
             self.neural_staff_option.configure(state="normal")
+            self.right_octave_option.configure(state="normal")
+            self.update_octave_controls()
             self.align_bars_option.configure(state="normal")
             self.downbeat_entry.configure(state="normal")
             self.meter_picker.configure(state="readonly")
@@ -959,6 +972,8 @@ class Application(ttk.Frame):
             self.score_option.configure(state="disabled")
             self.score_simplify_option.configure(state="disabled")
             self.neural_staff_option.configure(state="disabled")
+            self.right_octave_option.configure(state="disabled")
+            self.move_left_chords_option.configure(state="disabled")
             self.align_bars_option.configure(state="disabled")
             self.downbeat_entry.configure(state="disabled")
             self.meter_picker.configure(state="disabled")
@@ -1046,6 +1061,10 @@ class Application(ttk.Frame):
             self.shorten_pedal_tails.set(True)
         if self.shorten_pedal_tails.get():
             self.musescore_export.set(True)
+
+    def update_octave_controls(self):
+        enabled = self.mode.get() == "Piano and instruments" and self.prefer_right_octave.get()
+        self.move_left_chords_option.configure(state="normal" if enabled else "disabled")
 
     def toggle_log(self):
         self.log_open = not self.log_open
@@ -1723,8 +1742,8 @@ class Application(ttk.Frame):
         selected_model = self.music_model.get()
         piano_selected = (self.input_is_piano.get() or (self.piano_only.get() and self.stem_choice.get().strip().lower() == 'piano') or
                           selected_model in ('Piano', 'PianoV2', 'Transkun (piano)', 'Transkun V2 Aug', 'Pedal Piano'))
-        final_hands = self.split_hands.get() or (piano_selected and (
-            self.neural_staff.get() or self.align_bars.get() or self.simplify_score.get() or self.shorten_pedal_tails.get() or self.clarify_pedal_melody.get() or
+        final_hands = self.split_hands.get() or self.prefer_right_octave.get() or (piano_selected and (
+            self.neural_staff.get() or self.prefer_right_octave.get() or self.align_bars.get() or self.simplify_score.get() or self.shorten_pedal_tails.get() or self.clarify_pedal_melody.get() or
             self.score_tempo.get().strip().lower() != 'auto' or self.score_key.get() != 'Auto' or
             self.score_meter.get() != 'Auto' or self.score_downbeat.get().strip().lower() != 'auto'))
         imported_path = self.custom_models.get(selected_model, self.custom_model_path if selected_model == CUSTOM_MODEL else None)
@@ -1963,6 +1982,10 @@ class Application(ttk.Frame):
                     cmd.extend(["--score-meter", self.score_meter.get()])
                 if self.neural_staff.get():
                     cmd.append("--neural-staff")
+                if self.prefer_right_octave.get():
+                    cmd.append("--prefer-right-octave")
+                    if self.move_left_chords.get():
+                        cmd.append("--move-left-chords")
                 if self.simplify_score.get():
                     cmd.append("--simplify-score")
                 if self.score_key.get() != "Auto":

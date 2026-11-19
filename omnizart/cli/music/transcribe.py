@@ -44,6 +44,8 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--score-meter", type=click.Choice(["3", "4"]), default=None, help="Override the beats per bar.")
 @click.option("--score-downbeat", type=click.FloatRange(min=0), default=None, help="Override the first bar line in seconds.")
 @click.option("--neural-staff", is_flag=True, help="Use experimental Piano SVSep staff suggestions for one piano track.")
+@click.option("--prefer-right-octave", is_flag=True, help="Move eligible nearby left-hand attacks to the right hand after hand assessment.")
+@click.option("--move-left-chords", is_flag=True, help="Also consider notes from simultaneous left-hand chords for the octave adjustment.")
 @click.option("--simplify-score", is_flag=True, help="Omit conflicting notes from the score if necessary; preserve the MIDI.")
 @click.option("--score-tempo", type=click.FloatRange(30, 300), default=None, help="Score tempo in BPM; omit to estimate it.")
 @click.option("--score-key", default="Auto", help="Score key, for example Bb or F#m; Auto estimates a key.")
@@ -58,7 +60,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
                save_accompaniment, include_vocals, separator, uvr_device, gpu_index,
-               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
+               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, prefer_right_octave, move_left_chords, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
     """Transcribe a single audio and output as a MIDI file.
 
     This will output a MIDI file with the same name as the given audio, except the
@@ -88,7 +90,9 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
         score = True
         if piano_output:
             split_hands = True
-    if neural_staff or (piano_output and (align_bars or simplify_score or score_tempo is not None or
+    if move_left_chords and not prefer_right_octave:
+        raise click.UsageError('--move-left-chords requires --prefer-right-octave.')
+    if neural_staff or prefer_right_octave or (piano_output and (align_bars or simplify_score or score_tempo is not None or
                                          score_key != 'Auto' or score_meter is not None or score_downbeat is not None)):
         split_hands = True
     if selected_stem and not re.fullmatch(r'[a-z0-9_-]+', selected_stem):
@@ -245,6 +249,7 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                                audio=input_audio, align_bars=align_bars, downbeat=score_downbeat,
                                beats_per_bar=int(score_meter) if score_meter else None, notate_pedal=shorten_pedal_tails,
                                clarify_pedal_melody=clarify_pedal_melody,
+                               prefer_right_octave=prefer_right_octave, move_left_chords=move_left_chords,
                                piano=(split_hands or input_is_piano or selected_stem == 'piano' or model_path in
                                       ("Piano", "PianoV2", "Transkun (piano)",
                                        "Transkun V2 Aug", "Pedal Piano")))

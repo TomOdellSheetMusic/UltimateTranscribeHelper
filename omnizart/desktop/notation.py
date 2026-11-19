@@ -210,6 +210,46 @@ def _assign_piano_hands(entries, measure_length=16, preferences=None, unit_scale
     return assigned
 
 
+def _prefer_right_hand_octave(staff_notes, move_left_chords=False):
+    """Move nearby simultaneous left attacks when the right hand can hold them.
+
+    This is an optional correction after the selected hand-assignment model.
+    A multi-note left-hand attack is protected unless explicitly requested.
+    The full overlap is checked for reach, finger count and duplicate pitches.
+    """
+    right = list(staff_notes[1])
+    left = list(staff_notes[2])
+    moved = []
+    attacks = defaultdict(list)
+    for note in left:
+        attacks[note[0]].append(note)
+    for onset, group in sorted(attacks.items()):
+        anchors = [note[2] for note in right if note[0] == onset]
+        if not anchors or (not move_left_chords and len({note[2] for note in group}) > 1):
+            continue
+        highest = max(anchors)
+        for note in sorted(group, key=lambda value: value[2], reverse=True):
+            start, end, pitch, _ = note
+            if not 0 <= highest - pitch <= 12:
+                continue
+            overlapping = [other for other in right if other[0] < end and other[1] > start]
+            if any(other[2] == pitch for other in overlapping):
+                continue
+            points = {start} | {other[0] for other in overlapping if start < other[0] < end}
+            unsafe = False
+            for point in points:
+                pitches = {pitch} | {other[2] for other in overlapping if other[0] <= point < other[1]}
+                if len(pitches) > 5 or max(pitches) - min(pitches) > 12:
+                    unsafe = True
+                    break
+            if unsafe:
+                continue
+            left.remove(note)
+            right.append(note)
+            moved.append(note)
+    return {1: right, 2: left}, moved
+
+
 def _simplify_piano_hands(staff_notes, measure_length):
     """Shorten conflicting held notes or omit notes to fit basic hand limits.
 
@@ -463,7 +503,7 @@ def _mark_tuplets(events):
                 notations = _element(note, 'notations')
             _element(notations, 'tuplet', type=typ)
 
-def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False, clarify_pedal_melody=False):
+def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False, clarify_pedal_melody=False, prefer_right_octave=False, move_left_chords=False):
     """Write a beat-aligned MusicXML draft with independent voices and stable clefs."""
     destination = Path(destination)
     if not analysis_only and destination.exists():
@@ -651,6 +691,9 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
             indexed = [(replacements.get(index, note), index) for note, index in indexed]
             if intervals:
                 warnings.warn(f'Pedal melody cleanup shortened {len(replacements)} note(s); review the notation.', UserWarning)
+        if prefer_right_octave and is_piano:
+            staff_notes, moved = _prefer_right_hand_octave(staff_notes, move_left_chords=move_left_chords)
+            warnings.warn(f'Octave hand adjustment moved {len(moved)} note(s) to the right hand; review the assignments.', UserWarning)
         if analysis_out is not None and is_piano:
             indices = defaultdict(deque)
             for note, index in indexed:

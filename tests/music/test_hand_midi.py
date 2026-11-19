@@ -9,7 +9,7 @@ from xml.etree import ElementTree as ET
 
 from omnizart.cli.hands import hands
 from omnizart.desktop.hand_midi import split_piano_midi
-from omnizart.desktop.notation import export_score
+from omnizart.desktop.notation import export_score, _prefer_right_hand_octave
 from omnizart.desktop.beat_grid import BeatGrid
 from omnizart.cli.music.transcribe import transcribe as music_transcribe
 
@@ -43,6 +43,48 @@ def absolute(track):
 
 
 class HandMidiTests(unittest.TestCase):
+    def test_octave_adjustment_respects_future_reach_and_left_chords(self):
+        # Each tuple is onset, end, pitch and velocity in score units.
+        notes = {1: [(0, 4, 72, 80), (8, 12, 72, 80), (10, 14, 84, 80),
+                     (16, 20, 72, 80), (24, 28, 72, 80)],
+                 2: [(0, 4, 65, 80), (8, 12, 65, 80), (16, 20, 60, 80),
+                     (24, 28, 65, 80), (24, 28, 48, 80)]}
+        updated, moved = _prefer_right_hand_octave(notes)
+        self.assertEqual(moved, [(0, 4, 65, 80), (16, 20, 60, 80)])
+        self.assertIn((8, 12, 65, 80), updated[2])  # future high note exceeds span
+        self.assertIn((16, 20, 60, 80), updated[1])  # exactly one octave is allowed
+        self.assertIn((24, 28, 65, 80), updated[2])  # left chord protected
+        expanded, moved = _prefer_right_hand_octave(notes, move_left_chords=True)
+        self.assertIn((24, 28, 65, 80), moved)
+        self.assertIn((24, 28, 48, 80), expanded[2])
+
+    def test_octave_adjustment_reaches_both_final_exports_after_neural_model(self):
+        with TemporaryDirectory() as folder:
+            audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
+            audio.touch()
+            def transcribe_stub(_audio, _model, target, *args):
+                midi = mido.MidiFile(ticks_per_beat=480)
+                midi.tracks.append(mido.MidiTrack([
+                    mido.Message('note_on', note=65, velocity=80),
+                    mido.Message('note_on', note=72, velocity=80),
+                    mido.Message('note_off', note=65, time=480),
+                    mido.Message('note_off', note=72)]))
+                midi.save(str(target) + '.mid')
+            with patch('omnizart.cli.music.transcribe._transcribe', side_effect=transcribe_stub), \
+                 patch('omnizart.desktop.svsep.predict_staff', return_value=[2, 1]), \
+                 patch('omnizart.desktop.notation._assign_piano_hands', side_effect=lambda entries, *a, **k:
+                       {1: [n for n in entries if n[2] == 72], 2: [n for n in entries if n[2] == 65]}):
+                result = CliRunner().invoke(music_transcribe, [str(audio), '--output', str(output),
+                    '--model-path', 'Piano', '--neural-staff', '--score', '--score-tempo', '120',
+                    '--score-key', 'C', '--prefer-right-octave'])
+            self.assertEqual(result.exit_code, 0, result.output)
+            midi = mido.MidiFile(output.with_name('result_hands.mid'))
+            self.assertEqual(sorted(msg.note for msg in midi.tracks[-2] if msg.type == 'note_on' and msg.velocity), [65, 72])
+            self.assertFalse(any(msg.type == 'note_on' and msg.velocity for msg in midi.tracks[-1]))
+            xml = ET.parse(output.with_suffix('.musicxml'))
+            self.assertEqual([n.findtext('staff') for n in xml.findall('.//note[pitch]')], ['1', '1'])
+            self.assertIn('moved 1 note', result.output)
+
     def test_pedal_melody_cleanup_reduces_overfull_chords(self):
         with TemporaryDirectory() as folder:
             source = Path(folder) / 'dense.mid'
