@@ -503,7 +503,7 @@ def _mark_tuplets(events):
                 notations = _element(note, 'notations')
             _element(notations, 'tuplet', type=typ)
 
-def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False, clarify_pedal_melody=False, prefer_right_octave=False, move_left_chords=False):
+def export_score(source, destination, tempo=None, piano=True, simplify=False, neural_staff=False, audio=None, align_bars=False, downbeat=None, beats_per_bar=None, score_key='Auto', analysis_out=None, analysis_only=False, notate_pedal=False, clarify_pedal_melody=False, prefer_right_octave=False, move_left_chords=False, score_performance_tempos=False, score_freely=False):
     """Write a beat-aligned MusicXML draft with independent voices and stable clefs."""
     destination = Path(destination)
     if not analysis_only and destination.exists():
@@ -790,21 +790,25 @@ def export_score(source, destination, tempo=None, piano=True, simplify=False, ne
                     clef = _element(attrs, 'clef', **({'number': str(staff)} if is_piano else {}))
                     _element(clef, 'sign', 'F' if staff == 2 else 'G')
                     _element(clef, 'line', 4 if staff == 2 else 2)
-                direction = _element(measure, 'direction', placement='above')
-                dt = _element(direction, 'direction-type')
-                metro = _element(dt, 'metronome')
-                _element(metro, 'beat-unit', 'quarter')
-                initial_bpm = bpm
-                if grid:
-                    initial_marks = grid.tempo_marks(original_length, 0)
-                    initial_bpm = next((value for offset, value in reversed(initial_marks) if offset * unit_scale <= first_left), bpm)
-                _element(metro, 'per-minute', f'{initial_bpm:g}')
-                _element(direction, 'sound', tempo=f'{initial_bpm:g}')
-            if grid:
+                if number == 1:
+                    if score_freely:
+                        freely = _element(measure, 'direction', placement='above')
+                        _element(_element(freely, 'direction-type'), 'words', 'Freely')
+                    direction = _element(measure, 'direction', placement='above')
+                    dt = _element(direction, 'direction-type')
+                    metro = _element(dt, 'metronome')
+                    _element(metro, 'beat-unit', 'quarter')
+                    initial_bpm = bpm
+                    if grid and score_performance_tempos:
+                        initial_marks = grid.tempo_marks(original_length, 0)
+                        initial_bpm = next((value for offset, value in reversed(initial_marks) if offset * unit_scale <= first_left), bpm)
+                    _element(metro, 'per-minute', f'{initial_bpm:g}')
+                    _element(direction, 'sound', tempo=f'{initial_bpm:g}')
+            if number == 1 and grid and score_performance_tempos:
                 for offset, current_bpm in grid.tempo_marks(original_length, measure_no):
                     offset *= unit_scale
                     if measure_no == 0:
-                        if offset < first_left:
+                        if offset <= first_left:
                             continue
                         offset -= first_left
                     direction = _element(measure, 'direction')

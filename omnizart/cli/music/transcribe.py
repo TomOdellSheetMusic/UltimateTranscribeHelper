@@ -45,6 +45,8 @@ music = LazyLoader("music", globals(), "omnizart.music")
 @click.option("--compare-midi", type=click.Path(exists=True, dir_okay=False), default=None, help="Compare note onsets with an existing MIDI.")
 @click.option("--score-grid", type=click.Choice(["off", "8", "16", "32"]), default="off", help="Optional score-only rhythm grid.")
 @click.option("--score", is_flag=True, help="Write a notation draft as MusicXML without MuseScore.")
+@click.option("--score-performance-tempos", is_flag=True, help="Keep hidden performance tempo changes in MusicXML playback.")
+@click.option("--score-freely", is_flag=True, help="Add a Freely marking to the MusicXML score.")
 @click.option("--split-hands", is_flag=True, help="Save an additional piano MIDI with separate left and right hand tracks.")
 @click.option("--align-bars", is_flag=True, help="Detect beats and downbeats from the source audio.")
 @click.option("--score-meter", type=click.Choice(["3", "4"]), default=None, help="Override the beats per bar.")
@@ -66,7 +68,7 @@ music = LazyLoader("music", globals(), "omnizart.music")
 def transcribe(input_audio, model_path, output, onset_th, duration_th, instrument_th, frame_th, minimum_note_ms,
                remove_vocals, piano_only, separate_stem, save_separated_stem, input_is_piano, piano_separator, pymss_model, pymss_source, pymss_device, custom_stem_model,
                save_accompaniment, include_vocals, vocal_transcription_model, vocal_transcription_device, keep_vocal_pitch_bends, separator, reduction_pymss_model, vocal_track_separator, vocal_track_pymss_model, uvr_device, gpu_index,
-               compare_midi, score_grid, score, split_hands, align_bars, score_meter, score_downbeat, neural_staff, prefer_right_octave, move_left_chords, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
+               compare_midi, score_grid, score, score_performance_tempos, score_freely, split_hands, align_bars, score_meter, score_downbeat, neural_staff, prefer_right_octave, move_left_chords, simplify_score, score_tempo, score_key, musescore, lint_notes, smooth_notes, smooth_gap_ms, remove_short_ms, remove_quiet_velocity, shorten_pedal_tails, clarify_pedal_melody):
     """Transcribe a single audio and output as a MIDI file.
 
     This will output a MIDI file with the same name as the given audio, except the
@@ -314,6 +316,8 @@ def transcribe(input_audio, model_path, output, onset_th, duration_th, instrumen
                                audio=input_audio, align_bars=align_bars, downbeat=score_downbeat,
                                beats_per_bar=int(score_meter) if score_meter else None, notate_pedal=shorten_pedal_tails,
                                clarify_pedal_melody=clarify_pedal_melody,
+                               score_performance_tempos=score_performance_tempos,
+                               score_freely=score_freely,
                                prefer_right_octave=prefer_right_octave, move_left_chords=move_left_chords,
                                piano=(split_hands or input_is_piano or selected_stem == 'piano' or model_path in
                                       ("Piano", "PianoV2", "Transkun (piano)",

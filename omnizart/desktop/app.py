@@ -300,6 +300,8 @@ class Application(ttk.Frame):
         self.compare_path = tk.StringVar()
         self.score_grid = tk.StringVar(value="Off")
         self.score_tempo = tk.StringVar(value="Auto")
+        self.score_performance_tempos = tk.BooleanVar(value=False)
+        self.score_freely = tk.BooleanVar(value=False)
         self.score_key = tk.StringVar(value="Auto")
         self.align_bars = tk.BooleanVar(value=True)
         self.score_downbeat = tk.StringVar(value="Auto")
@@ -356,6 +358,8 @@ class Application(ttk.Frame):
             "use_gpu": self.use_gpu, "gpu_index": self.gpu_index,
             "compare_enabled": self.compare_enabled, "compare_path": self.compare_path,
             "score_tempo": self.score_tempo, "score_key": self.score_key, "align_bars": self.align_bars,
+            "score_performance_tempos": self.score_performance_tempos,
+            "score_freely": self.score_freely,
             "score_downbeat": self.score_downbeat, "score_meter": self.score_meter,
             "simplify_score": self.simplify_score, "neural_staff": self.neural_staff,
             "prefer_right_octave": self.prefer_right_octave, "move_left_chords": self.move_left_chords,
@@ -683,6 +687,13 @@ class Application(ttk.Frame):
         self.align_bars_option = ttk.Checkbutton(card, text="Align bars to audio beats", variable=self.align_bars, style="App.TCheckbutton")
         self.align_bars_option.grid(row=22, column=0, sticky="w", pady=(10, 0))
         Tooltip(self.align_bars_option, "Detects beats and downbeats using Beat This. The final piano MIDI and optional score share the beat grid. First use installs the model; review the result.")
+        self.score_performance_tempos_option = ttk.Checkbutton(card, text="Keep performance tempo changes in MusicXML playback",
+            variable=self.score_performance_tempos, style="App.TCheckbutton")
+        self.score_performance_tempos_option.grid(row=28, column=0, columnspan=2, sticky='w', pady=(10, 0))
+        Tooltip(self.score_performance_tempos_option, 'Adds hidden tempo changes to MusicXML playback to follow the recording. Leave off for a clean score with one tempo. The aligned MIDI retains its own performance timing.')
+        self.score_freely_option = ttk.Checkbutton(card, text='Mark score "Freely"', variable=self.score_freely, style="App.TCheckbutton")
+        self.score_freely_option.grid(row=29, column=0, columnspan=2, sticky='w', pady=(6, 0))
+        Tooltip(self.score_freely_option, 'Adds a Freely marking above the score. It does not change the timing of the MIDI or MusicXML playback.')
         self.downbeat_frame = ttk.Frame(card, style="Card.TFrame")
         self.downbeat_frame.grid(row=22, column=1, sticky="w", padx=(14, 0), pady=(10, 0))
         ttk.Label(self.downbeat_frame, text="First bar line (seconds)", style="CardLabel.TLabel").pack(side="left", padx=(0, 6))
@@ -963,6 +974,8 @@ class Application(ttk.Frame):
             self.right_octave_option.configure(state="normal")
             self.update_octave_controls()
             self.align_bars_option.configure(state="normal")
+            self.score_performance_tempos_option.configure(state="normal")
+            self.score_freely_option.configure(state="normal")
             self.downbeat_entry.configure(state="normal")
             self.meter_picker.configure(state="readonly")
             self.score_button.configure(state="normal")
@@ -1048,6 +1061,8 @@ class Application(ttk.Frame):
             self.right_octave_option.configure(state="disabled")
             self.move_left_chords_option.configure(state="disabled")
             self.align_bars_option.configure(state="disabled")
+            self.score_performance_tempos_option.configure(state="disabled")
+            self.score_freely_option.configure(state="disabled")
             self.downbeat_entry.configure(state="disabled")
             self.meter_picker.configure(state="disabled")
             self.score_button.configure(state="disabled")
@@ -2203,6 +2218,10 @@ class Application(ttk.Frame):
                 cmd.extend(["--compare-midi", self.compare_path.get()])
             if self.musescore_export.get():
                 cmd.append("--score")
+                if self.score_performance_tempos.get():
+                    cmd.append('--score-performance-tempos')
+                if self.score_freely.get():
+                    cmd.append('--score-freely')
             if self.musescore_export.get() or final_hands:
                 if self.align_bars.get():
                     cmd.append("--align-bars")

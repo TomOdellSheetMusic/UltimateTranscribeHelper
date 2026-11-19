@@ -317,7 +317,7 @@ class HandMidiTests(unittest.TestCase):
             self.assertTrue(output.with_suffix('.mid').is_file())
             self.assertTrue(output.with_name('result_hands.mid').is_file())
 
-    def test_aligned_score_and_midi_use_same_neural_hands_and_tempo_map(self):
+    def test_aligned_score_and_midi_share_hands_but_midi_keeps_performance_tempos(self):
         with TemporaryDirectory() as folder:
             audio, output = Path(folder) / 'input.wav', Path(folder) / 'result'
             audio.touch()
@@ -341,6 +341,8 @@ class HandMidiTests(unittest.TestCase):
             for track in midi.tracks[-2:]:
                 self.assertTrue(all(tick % 120 == 0 for tick, msg in absolute(track) if msg.type in ('note_on', 'note_off')))
             xml = ET.parse(output.with_suffix('.musicxml'))
+            self.assertEqual(len(xml.findall('.//sound[@tempo]')), 1)
+            self.assertGreater(len([m for m in midi.tracks[0] if m.type == 'set_tempo']), 1)
             staff_by_pitch = {int(n.findtext('pitch/octave')) * 12 + {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}[n.findtext('pitch/step')] + 12:
                               int(n.findtext('staff')) for n in xml.findall('.//note[pitch]')}
             self.assertEqual((staff_by_pitch[72], staff_by_pitch[48]), (1, 2))

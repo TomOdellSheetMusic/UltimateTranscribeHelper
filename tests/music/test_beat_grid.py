@@ -59,6 +59,7 @@ class BeatGridTests(unittest.TestCase):
     def test_score_uses_audio_beats_and_preserves_midi(self):
         with TemporaryDirectory() as folder:
             source, target = Path(folder) / 'in.mid', Path(folder) / 'out.musicxml'
+            expressive = Path(folder) / 'expressive.musicxml'
             midi = mido.MidiFile(ticks_per_beat=480)
             midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=90, time=960),
                                                mido.Message('note_off', note=60, time=480)]))
@@ -67,13 +68,20 @@ class BeatGridTests(unittest.TestCase):
             beats = [1, 1.5, 2.1, 2.6, 3.2, 3.8, 4.4, 5, 5.6]
             with patch('omnizart.desktop.beat_alignment.detect', return_value=(beats, [1, 3.2, 5.6])):
                 export_score(source, target, audio='song.wav', align_bars=True)
+                export_score(source, expressive, audio='song.wav', align_bars=True, score_performance_tempos=True, score_freely=True)
             root = ET.parse(target).getroot()
             first_pitched = next(m for m in root.findall('.//part/measure') if m.find('.//pitch') is not None)
             self.assertEqual(first_pitched.get('number'), '2')
-            self.assertGreater(float(root.findtext('.//metronome/per-minute')), 110)
             tempi = [float(sound.get('tempo')) for sound in root.findall('.//sound[@tempo]')]
-            self.assertTrue(any(abs(bpm - 100) < .01 for bpm in tempi))
-            self.assertTrue(any(bpm > 110 for bpm in tempi))
+            self.assertEqual(len(tempi), 1)
+            self.assertFalse(root.findall('.//words[@print-object="no"]'))
+            expressive_root = ET.parse(expressive).getroot()
+            self.assertEqual([w.text for w in expressive_root.findall('.//words') if w.text == 'Freely'], ['Freely'])
+            expressive_tempi = [float(sound.get('tempo')) for sound in expressive_root.findall('.//sound[@tempo]')]
+            self.assertTrue(any(abs(bpm - 100) < .01 for bpm in expressive_tempi))
+            self.assertTrue(any(bpm > 110 for bpm in expressive_tempi))
+            self.assertEqual([ET.tostring(n) for n in root.findall('.//note')],
+                             [ET.tostring(n) for n in expressive_root.findall('.//note')])
             self.assertEqual(source.read_bytes(), before)
 
     def test_unsupported_meter_is_preserved_when_alignment_falls_back(self):

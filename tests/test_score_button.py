@@ -28,7 +28,7 @@ class ScoreButtonTests(unittest.TestCase):
                 split_hands=var(False), prefer_right_octave=var(False), move_left_chords=var(False),
                 shorten_pedal_tails=var(False), clarify_pedal_melody=var(False), remove_quiet_notes=var(False),
                 vocal_backend=var('Built-in'),
-                musescore_export=var(True), align_bars=var(False), score_downbeat=var('Auto'), score_meter=var('Auto'), score_key=var('Bb'), neural_staff=var(False), simplify_score=var(True), score_tempo=var('154'), pdf_export=var(False),
+                musescore_export=var(True), score_performance_tempos=var(False), score_freely=var(False), align_bars=var(False), score_downbeat=var('Auto'), score_meter=var('Auto'), score_key=var('Bb'), neural_staff=var(False), simplify_score=var(True), score_tempo=var('154'), pdf_export=var(False),
                 musescore_path=var(''), lint_notes=var(False), save_folders=Mock(),
                 log=Mock(), start_button=Mock(), open_button=Mock(), progress=Mock(), status=Mock(),
                 run=Mock())
@@ -40,11 +40,16 @@ class ScoreButtonTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index('--score-tempo') + 1], '154')
             self.assertEqual(cmd[cmd.index('--score-key') + 1], 'Bb')
             self.assertNotIn('--musescore', cmd)
+            self.assertNotIn('--score-performance-tempos', cmd)
             app.output_lock.unlink()
             app.neural_staff = var(True)
+            app.score_performance_tempos = var(True)
+            app.score_freely = var(True)
             with patch('omnizart.desktop.app.threading.Thread') as thread, patch('omnizart.desktop.optional_models.ready', return_value=True):
                 Application.start(app)
             self.assertIn('--neural-staff', thread.call_args.kwargs['args'][0])
+            self.assertIn('--score-performance-tempos', thread.call_args.kwargs['args'][0])
+            self.assertIn('--score-freely', thread.call_args.kwargs['args'][0])
             app.output_lock.unlink()
             app.neural_staff = var(False)
             app.align_bars = var(True)
