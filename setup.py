@@ -130,6 +130,7 @@ packages = \
 
 package_data = \
 {'': ['*'],
+ 'omnizart.desktop': ['assets/*.zip'],
  'omnizart.vendor.piano_svsep': ['LICENSE', 'README.md'],
  'omnizart': ['checkpoints/beat/beat_blstm/*',
               'checkpoints/beat/beat_blstm/variables/*',
@@ -184,7 +185,7 @@ LONG_DESCRIPTION = open("README.md", "r", encoding="utf-8").read()
 
 setup_kwargs = {
     'name': 'omnizart',
-    'version': '0.6.5',
+    'version': '0.6.6',
     'description': 'Omniscient Mozart, being able to transcribe everything in the music.',
     'long_description': LONG_DESCRIPTION,
     'author': 'BreezeWhite',

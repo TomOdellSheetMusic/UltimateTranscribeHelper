@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.6 - 2026-11-19
+
+- Add ROSVOT singing transcription with optional NVIDIA acceleration, and offer
+  Basic Pitch alongside the existing Omnizart Vocal model.
+- Place the vocal part before piano in combined MIDI and MusicXML exports.
+
 ## 0.6.5 - 2026-11-19
 
 - Make the pymss model browsers prominent for vocal reduction and vocal MIDI.
